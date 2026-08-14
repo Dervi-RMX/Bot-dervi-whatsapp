@@ -1,0 +1,14 @@
+node_modules/
+sessions/
+tmp/
+logs/
+.env
+npm-debug.log*
+*.log
+
+# Archivos locales de Windows / desarrollo
+nodejs/
+nodejs.zip
+temp/
+*.bak
+yt-dlp.exe
