@@ -9,8 +9,8 @@ module.exports = {
     const config = context.handler?.config || {};
     const prefix = config.prefix || '.';
 
-    // Load banner image from Downloads folder
-    const bannerPath = path.resolve('C:\\Users\\deivi\\Downloads\\9984643a-f46c-4cc1-acbd-75eba5bde0c2.png');
+    // Load banner image from assets folder
+    const bannerPath = path.resolve(__dirname, '..', 'assets', '9984643a-f46c-4cc1-acbd-75eba5bde0c2.png');
     let bannerBuffer = null;
 
     try {
@@ -64,8 +64,7 @@ module.exports = {
       `  • .silenciar <usuario> [tiempo] — Silenciar usuario\n` +
       `  • .desilenciar / .unmute — Quitar silencio a un usuario\n` +
       `  • .ban <usuario> — Expulsar usuario (solo admin)\n` +
-      `  • .warn <usuario> — Agregar alerta manual\n` +
-      `  • .admin-tools — Herramientas administrativas\n\n` +
+      `  • .warn <usuario> — Agregar alerta manual\n\n` +
       `──────────────────────────────────\n` +
       `` +
       `*🔍 BÚSQUEDA Y ANÁLISIS*\n` +
@@ -78,8 +77,7 @@ module.exports = {
       `  • .gemini <pregunta> — Consultar Google Gemini\n\n` +
       `──────────────────────────────────\n` +
       `` +
-      `*🧪 EXPERIMENTAL*\n` +
-      `  • .canary — Funciones experimentales\n\n` +
+      `*🧪 EXPERIMENTAL*\n\n` +
       `💡 Escribe .<comando> para usar\n` +
       `Owner: dervi MRJUNIOR`;
 

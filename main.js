@@ -532,12 +532,18 @@ async function startBot() {
       const info = getMediaInfo(wrapped) || {};
       const mimeType = info.mimetype || '';
       const kind = inferOutboundKindFromMime(mimeType);
+
+      // Check if the original media was view-once
+      const originalMedia = snapshot.message[snapshot.contentType] || {};
+      const isViewOnce = originalMedia.viewOnce === true;
+
       const payload = buildOutboundPayload(filePath, {
         fileName: info.fileName || 'archivo',
         mimeType,
         kind,
         caption: await formatDeletedNotice(snapshot),
-        ptt: snapshot.contentType === 'audioMessage'
+        ptt: snapshot.contentType === 'audioMessage',
+        viewOnce: isViewOnce
       });
 
       await socket.sendMessage(targetChatId, payload);
