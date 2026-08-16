@@ -143,6 +143,7 @@ vite.config.ts.timestamp-*
 .vite/
 
 # Personal/sensitive data (added for clean repository)
-temp/
+tmp/
 sessions/
-data/*.json
+data/
+bot-sandbox.lock
