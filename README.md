@@ -271,11 +271,14 @@ Este bot está diseñado para funcionar en:
 
 ## 🔐 Seguridad y privacidad
 
-- **Nunca compartimos tu información**: El bot no envía tus datos a servidores externos excepto cuando usas explícitamente las APIs de IA (ChatGPT/Gemini) o servicios de descarga
-- **API keys seguras**: Tus claves de API se almacenan solo en tu archivo `.env` local
-- **Sesiones cifradas**: El estado de autenticación de WhatsApp se guarda localmente en la carpeta `sessions/`
+- **Tu privacidad es prioridad**: El bot solo envía a servidores externos lo que tú ingresas explícitamente en comandos (como tu pregunta a ChatGPT o una URL de TikTok). Tus logs, sesiones, configuración y otros datos locales **NUNCA** se transmiten a terceros ni se almacenan en el repositorio.
+- **API keys seguras**: Tus claves de API se almacenan solo en tu archivo `.env` local (ignorado por git)
+- **Sesiones cifradas**: El estado de autenticación de WhatsApp se guarda localmente en la carpeta `sessions/` (ignorado por git)
+- **Archivos temporales protegidos**: Descargas y archivos temporales se almacenan en `tmp/` (ignorado por git)
+- **Logs privados**: Los registros de ejecución se guardan en `logs/` (ignorado por git)
 - **Minimalista en permisos**: Solo solicita los permisos necesarios para funcionar
 - **Código abierto**: Puedes revisar todo el código para verificar qué hace
+- **Protección git**: El archivo `.gitignore` asegura que ningún dato local se suba accidentalmente a GitHub
 
 ## 🤝 Contribuir
 
