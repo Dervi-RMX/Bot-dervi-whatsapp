@@ -291,6 +291,16 @@ Este bot está diseñado para funcionar en:
 - El `context` proporciona acceso al cliente WhatsApp, configuración, utilidades, etc.
 - Mantén los plugins lo más independientes posible
 
+### Reconocimiento y Créditos
+
+Si utilizas o modificas este proyecto para tu propio bot o proyecto, agradeceríamos que mantuvieras reconocimientos apropiados al trabajo original. Esto ayuda a mantener viva la comunidad de código abierto y permite que otros encuentren y se beneficien de este trabajo.
+
+Algunas formas de dar crédito incluyen:
+- Mantener este aviso en tu fork o proyecto derivado
+- Enlazar al repositorio original en tu documentación
+- Mencionar "Basado en BOT SANDBOX" en tu README o descripción
+- Dar una estrella ⭐ al repositorio original si lo encuentras útil
+
 ## 📄 Licencia
 
 Este proyecto está bajo la Licencia MIT - ver el archivo [LICENSE](LICENSE) para detalles.
