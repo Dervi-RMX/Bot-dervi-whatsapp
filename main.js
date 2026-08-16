@@ -14,6 +14,7 @@ const config = require('./config');
 const logger = require('./lib/logger');
 const CommandHandler = require('./handler');
 const { ensureDir, getMessageText, getMediaInfo } = require('./lib/utils');
+const { normalizeJid, DEFAULT_WELCOME_MESSAGE } = require('./lib/moderation');
 const { inferOutboundKindFromMime, buildOutboundPayload } = require('./lib/media');
 const { downloadQuotedMedia } = require('./lib/downloader');
 
@@ -28,7 +29,12 @@ const banner = [
 
 let restarting = false;
 const instanceLockFile = path.join(__dirname, 'bot-sandbox.lock');
+const processedCommandsFile = path.join(config.dataDirectory, 'processed-commands.json');
+const processedCommandsTtlMs = 7 * 24 * 60 * 60 * 1000;
 let noisySignalFilterInstalled = false;
+
+// Variable to hold the auto-detected owner JID
+let autoDetectedOwnerJid = null;
 
 function installNoisySignalFilter() {
   if (noisySignalFilterInstalled) return;
@@ -102,6 +108,76 @@ function releaseInstanceLock() {
   }
 }
 
+function loadProcessedCommandIds(now = Date.now()) {
+  try {
+    if (!fs.existsSync(processedCommandsFile)) return new Map();
+    const raw = JSON.parse(fs.readFileSync(processedCommandsFile, 'utf8'));
+    const source = raw && typeof raw === 'object' && raw.messages && typeof raw.messages === 'object'
+      ? raw.messages
+      : raw;
+    const entries = source && typeof source === 'object' ? Object.entries(source) : [];
+    const result = new Map();
+    for (const [id, value] of entries) {
+      const timestamp = Number(value);
+      if (!id || !Number.isFinite(timestamp)) continue;
+      if (now - timestamp >= 0 && now - timestamp <= processedCommandsTtlMs) {
+        result.set(id, timestamp);
+      }
+    }
+    return result;
+  } catch (error) {
+    logger.warning('Could not load processed command ledger', {
+      file: processedCommandsFile,
+      error: error?.message || String(error)
+    });
+    return new Map();
+  }
+}
+
+function saveProcessedCommandIds(processedIds) {
+  const payload = JSON.stringify(Object.fromEntries(processedIds.entries()));
+  const temporaryFile = `${processedCommandsFile}.${process.pid}.tmp`;
+  try {
+    ensureDir(config.dataDirectory);
+    fs.writeFileSync(temporaryFile, payload, 'utf8');
+    try {
+      fs.renameSync(temporaryFile, processedCommandsFile);
+    } catch (renameError) {
+      // Windows can reject replacing an existing file; keep the ledger durable.
+      fs.writeFileSync(processedCommandsFile, payload, 'utf8');
+      fs.rmSync(temporaryFile, { force: true });
+    }
+  } catch (error) {
+    try {
+      fs.rmSync(temporaryFile, { force: true });
+    } catch {
+      // ignore cleanup errors
+    }
+    logger.warning('Could not save processed command ledger', {
+      file: processedCommandsFile,
+      error: error?.message || String(error)
+    });
+  }
+}
+
+function getMessageTimestampSeconds(message) {
+  const raw = message?.messageTimestamp;
+  const candidates = [
+    typeof raw?.toNumber === 'function' ? raw.toNumber() : null,
+    raw && typeof raw === 'object' ? raw.low : null,
+    raw && typeof raw === 'object' ? raw.value : null,
+    raw && typeof raw === 'object' ? raw.$numberLong : null,
+    raw
+  ];
+
+  for (const candidate of candidates) {
+    const timestamp = Number(candidate);
+    if (!Number.isFinite(timestamp) || timestamp <= 0) continue;
+    return timestamp > 10 ** 12 ? Math.floor(timestamp / 1000) : Math.floor(timestamp);
+  }
+  return null;
+}
+
 process.on('uncaughtException', error => {
   const message = String(error?.message || '');
   if (/Connection Closed|Precondition Required/i.test(message)) {
@@ -121,16 +197,31 @@ process.on('unhandledRejection', reason => {
 });
 
 async function startBot() {
+  const startedAtSeconds = Math.floor(Date.now() / 1000);
   installNoisySignalFilter();
   ensureDir(config.sessionDirectory);
   ensureDir(config.tempDirectory);
   ensureDir(config.logDirectory);
+  ensureDir(config.dataDirectory);
   logger.ensureLogFile(config.logDirectory);
   console.log(banner);
   console.log('\nIniciando WhatsApp...\n');
 
   const { state, saveCreds } = await useMultiFileAuthState(config.sessionDirectory);
   const { version } = await fetchLatestBaileysVersion();
+
+  // Auto-detect owner if not set in config
+  let effectiveOwnerJid = config.ownerJid;
+  if (!effectiveOwnerJid && state.creds.me) {
+    // Use the authenticated user's JID as the owner if not explicitly set
+    effectiveOwnerJid = state.creds.me.id || state.creds.me;
+    autoDetectedOwnerJid = effectiveOwnerJid;
+    logger.info('Owner auto-detected from credentials', { ownerJid: effectiveOwnerJid });
+    // Update config so that handler sees the owner
+    config.ownerJid = effectiveOwnerJid;
+  } else if (!effectiveOwnerJid) {
+    logger.warning('No owner JID configured and could not auto-detect from credentials');
+  }
 
   const socket = makeWASocket({
     version,
@@ -148,7 +239,9 @@ async function startBot() {
 
   const sentMessageIds = new Set();
   const processedIncoming = new Map(); // id -> timestamp
-  const recentMessages = new Map(); // cache key -> snapshot for anti-delete
+  const processedCommandIds = loadProcessedCommandIds();
+  const recentMessages = new Map(); // cache key -> snapshot for anti-delete/edit
+  const recentEditEvents = new Map();
   const originalSendMessage = socket.sendMessage.bind(socket);
   socket.sendMessage = async (...args) => {
     const result = await originalSendMessage(...args);
@@ -174,48 +267,80 @@ async function startBot() {
     return processedIncoming.has(id);
   }
 
+  function markCommandProcessed(id) {
+    if (!id) return;
+    const now = Date.now();
+    processedCommandIds.set(id, now);
+    for (const [messageId, timestamp] of processedCommandIds.entries()) {
+      if (now - timestamp > processedCommandsTtlMs) processedCommandIds.delete(messageId);
+    }
+    saveProcessedCommandIds(processedCommandIds);
+  }
+
+  function isCommandProcessed(id) {
+    if (!id) return false;
+    const timestamp = processedCommandIds.get(id);
+    if (!timestamp) return false;
+    if (Date.now() - timestamp > processedCommandsTtlMs) {
+      processedCommandIds.delete(id);
+      return false;
+    }
+    return true;
+  }
+
   function getMessageCacheKeys(key = {}) {
     const remoteJid = key.remoteJid || '';
     const participant = key.participant || '';
     const id = key.id || '';
     if (!id) return [];
-    const keys = [
-      `${remoteJid}|${participant}|${id}`,
-      `${remoteJid}||${id}`,
-      `|${participant}|${id}`,
-      `||${id}`
-    ];
-    return [...new Set(keys)];
+    // Optimized: use Set directly to avoid array creation and conversion
+    const keysSet = new Set();
+    keysSet.add(`${remoteJid}|${participant}|${id}`);
+    keysSet.add(`${remoteJid}||${id}`);
+    keysSet.add(`|${participant}|${id}`);
+    keysSet.add(`||${id}`);
+    return [...keysSet];
   }
 
   function cacheIncomingMessage(msg) {
-    if (!config.antiDeleteEnabled) return;
+    if (!config.antiDeleteEnabled && !config.antiEditEnabled) return;
     if (!msg?.message) return;
     if (msg.message.protocolMessage) return; // deletion/control message
-    if (msg.key?.fromMe) return;
+
+    const cacheKeys = getMessageCacheKeys(msg.key || {});
+    if (!cacheKeys.length) return;
+    // Keep the first version so an edit can still report the original text.
+    if (cacheKeys.some(key => recentMessages.has(key))) return;
 
     const chatId = msg.key?.remoteJid || '';
-    const sender = msg.key?.participant || chatId || '';
+    const senderPn = msg.key?.participantPn || msg.key?.senderPn || '';
+    const sender = senderPn
+      || msg.key?.participant
+      || msg.key?.participantLid
+      || msg.key?.senderPn
+      || chatId
+      || '';
     const content = msg.message || {};
     const contentType = getContentType(content) || 'unknown';
     const text = getMessageText(msg) || '';
 
     const snapshot = {
       chatId,
+      chatPn: /@s\.whatsapp\.net$/i.test(chatId) ? chatId : senderPn,
       sender,
+      senderPn,
+      senderName: msg.pushName || msg.verifiedBizName || '',
       contentType,
       text,
       message: msg.message,
       timestamp: Date.now()
     };
 
-    for (const k of getMessageCacheKeys(msg.key || {})) {
-      recentMessages.set(k, snapshot);
-    }
+    for (const key of cacheKeys) recentMessages.set(key, snapshot);
 
     if (recentMessages.size > 4000) {
       const toDelete = Array.from(recentMessages.keys()).slice(0, 800);
-      for (const k of toDelete) recentMessages.delete(k);
+      for (const key of toDelete) recentMessages.delete(key);
     }
   }
 
@@ -232,7 +357,37 @@ async function startBot() {
     return null;
   }
 
-  function formatDeletedNotice(snapshot) {
+  function getPhoneNumber(jid) {
+    const value = String(jid || '').trim();
+    const at = value.indexOf('@');
+    if (at === -1) return /^\d{7,15}$/.test(value) ? `+${value}` : '';
+    const domain = value.slice(at + 1).toLowerCase();
+    const number = value.slice(0, at).split(':')[0];
+    if (domain !== 's.whatsapp.net' || !/^\d{7,15}$/.test(number)) return '';
+    return `+${number}`;
+  }
+
+  async function getDeletedChatLabel(snapshot) {
+    const chatId = String(snapshot?.chatId || '');
+    if (chatId.endsWith('@g.us')) {
+      try {
+        const metadata = await socket.groupMetadata(chatId);
+        if (metadata?.subject) return `Grupo: ${metadata.subject}`;
+      } catch {
+        // Keep a generic group label when metadata is unavailable.
+      }
+      return 'Grupo de WhatsApp';
+    }
+
+    const name = String(snapshot?.senderName || '').trim();
+    const phone = getPhoneNumber(snapshot?.chatPn || snapshot?.senderPn || snapshot?.sender);
+    if (name && phone) return `Chat privado: ${name} (${phone})`;
+    if (name) return `Chat privado: ${name}`;
+    if (phone) return `Chat privado: ${phone}`;
+    return 'Chat privado de WhatsApp';
+  }
+
+  async function formatDeletedNotice(snapshot) {
     const typeMap = {
       conversation: 'texto',
       extendedTextMessage: 'texto',
@@ -244,26 +399,130 @@ async function startBot() {
     };
     const kind = typeMap[snapshot.contentType] || snapshot.contentType || 'mensaje';
     const body = snapshot.text ? snapshot.text.slice(0, 1200) : '[sin texto/caption]';
+    const senderName = String(snapshot.senderName || '').trim();
+    const senderPhone = getPhoneNumber(snapshot.senderPn || snapshot.sender);
+    const senderLabel = senderName && senderPhone
+      ? `${senderName} (${senderPhone})`
+      : senderName || senderPhone || 'Usuario de WhatsApp';
+    const chatLabel = await getDeletedChatLabel(snapshot);
+
     return [
       '🕵️ *ANTI-DELETE*',
+      `👤 Lo envió: ${senderLabel}`,
+      `💬 Chat: ${chatLabel}`,
       `Tipo: ${kind}`,
-      `Origen chat: ${snapshot.chatId}`,
-      `Remitente: ${snapshot.sender}`,
       '',
       body
     ].join('\n');
   }
 
+  function getMonitoringTarget(sourceChatId, fallbackToSource = true) {
+    const target = normalizeJid(
+      config.antiDeleteTargetJid
+      || config.ownerJid  // Use the configured (or auto-detected) owner
+      || socket.user?.id
+      || socket.user?.lid
+    );
+    return target || (fallbackToSource ? sourceChatId : '');
+  }
+
+  function extractEditedContent(update) {
+    const edited = update?.update?.message?.editedMessage;
+    if (!edited || typeof edited !== 'object') return null;
+    if (edited.message && typeof edited.message === 'object') return edited.message;
+    return edited;
+  }
+
+  async function formatEditedNotice(snapshot, editedContent) {
+    const typeMap = {
+      conversation: 'texto',
+      extendedTextMessage: 'texto',
+      imageMessage: 'imagen',
+      videoMessage: 'video',
+      audioMessage: 'audio',
+      documentMessage: 'documento',
+      stickerMessage: 'sticker'
+    };
+    const editedWrapper = { message: editedContent };
+    const editedType = getContentType(editedWrapper) || snapshot.contentType || 'mensaje';
+    const kind = typeMap[editedType] || editedType;
+    const originalText = snapshot.text ? snapshot.text.slice(0, 1200) : '[sin texto/caption]';
+    const editedText = getMessageText(editedWrapper).slice(0, 1200) || '[sin texto/caption]';
+    const senderName = String(snapshot.senderName || '').trim();
+    const senderPhone = getPhoneNumber(snapshot.senderPn || snapshot.sender);
+    const senderLabel = senderName && senderPhone
+      ? `${senderName} (${senderPhone})`
+      : senderName || senderPhone || 'Usuario de WhatsApp';
+    const chatLabel = await getDeletedChatLabel(snapshot);
+
+    return [
+      '✏️ *ANTI-EDIT*',
+      `👤 Lo envió: ${senderLabel}`,
+      `💬 Chat: ${chatLabel}`,
+      `Tipo: ${kind}`,
+      '',
+      '*Mensaje original:*',
+      originalText,
+      '',
+      '*Mensaje editado:*',
+      editedText
+    ].join('\n');
+  }
+
+  async function replayEditedMessage(snapshot, editedContent) {
+    const targetChatId = getMonitoringTarget(snapshot?.chatId, false);
+    if (!targetChatId) {
+      logger.warning('Anti-edit notice skipped: no private target configured');
+      return false;
+    }
+    await socket.sendMessage(targetChatId, {
+      text: await formatEditedNotice(snapshot, editedContent)
+    });
+    return true;
+  }
+
+  async function processEditedMessage(originalKey = {}, editedContent, currentMsg = {}) {
+    if (!config.antiEditEnabled || !editedContent) return false;
+    const snapshot = findDeletedSnapshot(originalKey, currentMsg);
+    if (!snapshot) {
+      logger.info('Edited message original not found in cache', {
+        chatId: originalKey.remoteJid || currentMsg.key?.remoteJid,
+        messageId: originalKey.id
+      });
+      return false;
+    }
+
+    const editedText = getMessageText({ message: editedContent }) || '';
+    const eventKey = `${originalKey.remoteJid || ''}|${originalKey.participant || ''}|${originalKey.id || ''}|${editedText}`;
+    const now = Date.now();
+    const previous = recentEditEvents.get(eventKey) || 0;
+    if (now - previous < 10_000) return false;
+    recentEditEvents.set(eventKey, now);
+    for (const [key, timestamp] of recentEditEvents.entries()) {
+      if (now - timestamp > 60_000) recentEditEvents.delete(key);
+    }
+
+    const sent = await replayEditedMessage(snapshot, editedContent);
+    if (sent) {
+      logger.info('Anti-edit notice sent', {
+        chatId: snapshot.chatId,
+        messageId: originalKey.id,
+        target: getMonitoringTarget(snapshot.chatId, false)
+      });
+    }
+    return sent;
+  }
+
   async function replayDeletedMessage(snapshot) {
     const sourceChatId = snapshot?.chatId;
     if (!sourceChatId) return;
-    const targetChatId = config.antiDeleteTargetJid || sourceChatId;
+    const targetChatId = getMonitoringTarget(sourceChatId);
 
     const mediaTypes = new Set(['imageMessage', 'videoMessage', 'audioMessage', 'documentMessage', 'stickerMessage']);
     const isMedia = mediaTypes.has(snapshot.contentType);
 
     if (!isMedia) {
-      await socket.sendMessage(targetChatId, { text: formatDeletedNotice(snapshot) });
+      await socket.sendMessage(targetChatId, { text: await formatDeletedNotice(snapshot) });
       return;
     }
 
@@ -277,7 +536,7 @@ async function startBot() {
         fileName: info.fileName || 'archivo',
         mimeType,
         kind,
-        caption: `🕵️ ANTI-DELETE\nTipo: ${kind}\nOrigen chat: ${snapshot.chatId}\nRemitente: ${snapshot.sender}`,
+        caption: await formatDeletedNotice(snapshot),
         ptt: snapshot.contentType === 'audioMessage'
       });
 
@@ -285,11 +544,11 @@ async function startBot() {
       await fs.promises.unlink(filePath).catch(() => null);
     } catch (error) {
       logger.warning('Anti-delete media replay failed', { error: String(error?.message || error) });
-      await socket.sendMessage(targetChatId, { text: formatDeletedNotice(snapshot) });
+      await socket.sendMessage(targetChatId, { text: await formatDeletedNotice(snapshot) });
     }
   }
 
-  // periodic cleanup
+  // periodic cleanup - optimized with chained operations
   setInterval(() => {
     const cutoff = Date.now() - 1000 * 60 * 10; // 10 min
     for (const [k, t] of processedIncoming.entries()) {
@@ -319,6 +578,15 @@ async function startBot() {
       logger.success('✓ WhatsApp conectado correctamente.');
       console.log('\nBOT SANDBOX ONLINE');
       console.log(`Prefix: ${config.prefix}`);
+
+      // Show owner information
+      if (autoDetectedOwnerJid) {
+        console.log(`👤 Owner auto-detected: ${autoDetectedOwnerJid}`);
+        console.log(`   (Para fijar manualmente, establece BOT_OWNER_JID en .env)`);
+      } else if (config.ownerJid) {
+        console.log(`👤 Owner configurado: ${config.ownerJid}`);
+      }
+
       console.log('Waiting for messages...');
     }
 
@@ -341,14 +609,86 @@ async function startBot() {
     }
   });
 
+  const recentWelcomeEvents = new Map();
+
+  function renderWelcomeMessage(template, participantJids) {
+    const mentions = participantJids.map(jid => `@${String(jid).split('@')[0]}`);
+    const mentionText = mentions.join(', ');
+    const source = String(template || DEFAULT_WELCOME_MESSAGE);
+    return source.includes('{user}')
+      ? source.replace(/\{user\}/gi, mentionText)
+      : `${source}\n\n${mentionText}`;
+  }
+
+  socket.ev.on('group-participants.update', async update => {
+    try {
+      if (!update || update.action !== 'add' || !update.id) return;
+      const participants = [...new Set(
+        (Array.isArray(update.participants) ? update.participants : [])
+          .map(participant => normalizeJid(participant))
+          .filter(participant => participant && !participant.endsWith('@g.us'))
+      )];
+      if (!participants.length) return;
+
+      const eventKey = `${update.id}|${update.action}|${participants.join(',')}`;
+      const now = Date.now();
+      const previous = recentWelcomeEvents.get(eventKey) || 0;
+      if (now - previous < 10_000) return;
+      recentWelcomeEvents.set(eventKey, now);
+      for (const [key, timestamp] of recentWelcomeEvents.entries()) {
+        if (now - timestamp > 60_000) recentWelcomeEvents.delete(key);
+      }
+
+      const settings = handler.moderation.getWelcome(update.id);
+      if (!settings.enabled) return;
+
+      const text = renderWelcomeMessage(settings.message, participants);
+      await socket.sendMessage(update.id, { text, mentions: participants });
+      logger.success('Welcome message sent', { chatId: update.id, participants });
+    } catch (error) {
+      logger.warning('Welcome message failed', { error: String(error?.message || error) });
+    }
+  });
+
   socket.ev.on('messages.upsert', async ({ messages, type }) => {
     if (type !== 'notify' || !messages?.length) return;
 
     for (const msg of messages) {
       try {
         if (!msg.message) continue;
+
+        // WhatsApp may redeliver queued messages after a restart. Never
+        // execute commands that were created before this bot instance began.
+        const messageTimestamp = getMessageTimestampSeconds(msg);
+        if (!messageTimestamp) {
+          logger.warning('Ignoring message without a valid timestamp', {
+            id: msg.key?.id,
+            fromMe: Boolean(msg.key?.fromMe),
+            upsertType: type
+          });
+          continue;
+        }
+        if (messageTimestamp <= startedAtSeconds) {
+          logger.info('Ignoring stale message after restart', {
+            id: msg.key?.id,
+            messageTimestamp,
+            startedAtSeconds
+          });
+          continue;
+        }
+
         // dedupe incoming message IDs (some networks deliver duplicates)
         const incomingId = msg.key?.id;
+        const messageText = getMessageText(msg) || '';
+        const isCommand = String(messageText).trim().startsWith(config.prefix);
+        if (isCommand && incomingId && isCommandProcessed(incomingId)) {
+          logger.info('Ignoring previously processed command after reconnect', {
+            id: incomingId,
+            messageTimestamp,
+            fromMe: Boolean(msg.key?.fromMe)
+          });
+          continue;
+        }
         if (incomingId && isProcessed(incomingId)) continue;
         if (incomingId) markProcessed(incomingId);
 
@@ -357,10 +697,42 @@ async function startBot() {
           sentMessageIds.delete(msg.key.id);
           continue;
         }
+        if (isCommand && incomingId) markCommandProcessed(incomingId);
 
         const chatId = msg.key.remoteJid;
         if (!chatId || chatId === 'status@broadcast') continue;
-        const sender = msg.key.participant || chatId;
+        // Messages sent from the connected account can carry the recipient's
+        // LID in remoteJid. Treat them as owner commands instead of using the
+        // recipient as the sender.
+        // For incoming messages, prefer Baileys' phone-number JID when the
+        // account is represented by a WhatsApp LID (@lid).
+        const senderAliases = [...new Set(
+          (msg.key.fromMe
+            ? [socket.user?.id, socket.user?.lid, config.ownerJid]  // Use configured owner (now set)
+            : [
+                msg.key.participantPn,
+                msg.key.senderPn,
+                msg.key.participant,
+                msg.key.participantLid,
+                msg.key.senderPn,
+                ...(!String(chatId).endsWith('@g.us') ? [chatId] : [])
+              ]
+          ).filter(Boolean)
+        )];
+        const sender = msg.key.fromMe
+          ? (socket.user?.id || config.ownerJid || socket.user?.lid || chatId)
+          : (msg.key.participantPn
+            || msg.key.senderPn
+            || msg.key.participant
+            || msg.key.participantLid
+            || msg.key.senderPn
+            || chatId);
+
+        const editedContent = msg.message?.protocolMessage?.editedMessage;
+        if (config.antiEditEnabled && editedContent && msg.message?.protocolMessage?.key?.id) {
+          await processEditedMessage(msg.message.protocolMessage.key, editedContent, msg);
+          continue;
+        }
 
         if (config.antiDeleteEnabled && msg.message?.protocolMessage?.key?.id) {
           const snapshot = findDeletedSnapshot(msg.message.protocolMessage.key, msg);
@@ -380,7 +752,21 @@ async function startBot() {
         try {
           const text = getMessageText(msg) || '';
           if (String(text).trim().startsWith(config.prefix)) {
-            logger.info('← Command received', { chatId, sender, text: (text || '').slice(0, 200) });
+            const trimmed = String(text).trim();
+            const command = trimmed.slice(config.prefix.length).split(/\s+/)[0].toLowerCase();
+            const sensitiveCommands = new Set(['vincular', 'link', 'unir']);
+            const loggedText = sensitiveCommands.has(command)
+              ? `${config.prefix}${command} [código oculto]`
+              : trimmed.slice(0, 200);
+            logger.info('← Command received', {
+              chatId,
+              sender,
+              fromMe: Boolean(msg.key?.fromMe),
+              messageId: incomingId,
+              messageTimestamp,
+              upsertType: type,
+              text: loggedText
+            });
           }
         } catch (e) {
           // ignore logging errors
@@ -388,6 +774,7 @@ async function startBot() {
         await handler.handleMessage(msg, {
           chatId,
           sender,
+          senderAliases,
           receivedAt,
           quoted: quotedMessage ? msg : null
         });
@@ -397,10 +784,19 @@ async function startBot() {
     }
   });
 
-  socket.ev.on('messages.update', updates => {
+  socket.ev.on('messages.update', async updates => {
     for (const update of updates || []) {
-      if (!update.update?.status) continue;
-      logger.info('Message status updated');
+      try {
+        const editedContent = extractEditedContent(update);
+        if (config.antiEditEnabled && editedContent) {
+          await processEditedMessage(update.key || {}, editedContent, update);
+          continue;
+        }
+
+        if (update.update?.status) logger.info('Message status updated');
+      } catch (error) {
+        logger.warning('Anti-edit processing failed', { error: String(error?.message || error) });
+      }
     }
   });
 

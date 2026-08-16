@@ -5,7 +5,8 @@
   "main": "main.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node main.js"
+    "start": "node main.js",
+    "test": "node --test test-access-manager.js test-clip.js test-moderation.js test-chatgpt.js test-gemini.js"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.18",

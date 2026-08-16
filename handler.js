@@ -17,7 +17,22 @@ const { detectMessageContent } = require('./lib/content-detector');
 const { downloadQuotedMedia, downloadUrlToTempFile, cleanupTempFiles } = require('./lib/downloader');
 const { buildOutboundPayload, formatMediaInfo, inferOutboundKindFromMime } = require('./lib/media');
 const { ModerationManager, normalizeJid } = require('./lib/moderation');
+const { AccessManager } = require('./lib/access-manager');
 const logger = require('./lib/logger');
+
+function sameWhatsAppPhone(left, right) {
+  const normalize = value => {
+    const normalized = normalizeJid(value);
+    const at = normalized.indexOf('@');
+    if (at === -1 || normalized.slice(at + 1) !== 's.whatsapp.net') return normalized;
+    const number = normalized.slice(0, at);
+    return /^1\d{10}$/.test(number) ? number.slice(1) : number;
+  };
+
+  const leftValue = normalize(left);
+  const rightValue = normalize(right);
+  return Boolean(leftValue) && leftValue === rightValue;
+}
 
 class CommandHandler {
   constructor(client, config) {
@@ -29,6 +44,7 @@ class CommandHandler {
     this.activeProcessing = new Map(); // track active "processing" messages per chat
     this.groupInfoCache = new Map(); // chatId -> { admins:Set, botIsAdmin:boolean, expires:number }
     this.moderation = new ModerationManager(config);
+    this.access = new AccessManager(config);
   }
 
   async loadPlugins() {
@@ -73,10 +89,11 @@ class CommandHandler {
     const now = Date.now();
     const windowMs = this.config.rateLimitWindowMs;
     const max = this.config.rateLimitMax;
-    const bucket = this.rateMap.get(sender) || [];
+    const key = normalizeJid(sender) || String(sender || '');
+    const bucket = this.rateMap.get(key) || [];
     const fresh = bucket.filter(ts => now - ts < windowMs);
     fresh.push(now);
-    this.rateMap.set(sender, fresh);
+    this.rateMap.set(key, fresh);
     return fresh.length > max;
   }
 
@@ -176,10 +193,37 @@ class CommandHandler {
     return String(chatId || '').endsWith('@g.us');
   }
 
-  isOwner(sender) {
+  isOwnerIdentity(sender) {
     const owner = normalizeJid(this.config.ownerJid || '');
+    const ownerLid = normalizeJid(this.config.ownerLid || '');
+    const normalizedSender = normalizeJid(sender);
+
+    // WhatsApp can identify the owner with a stable LID instead of the
+    // configured phone-number JID.
+    if (ownerLid && normalizedSender === ownerLid) return true;
     if (!owner) return false;
-    return normalizeJid(sender) === owner;
+    if (normalizedSender === owner || sameWhatsAppPhone(normalizedSender, owner)) return true;
+
+    // Also accept the connected account's LID when that account matches the
+    // configured owner number.
+    const connectedOwner = normalizeJid(this.client?.user?.id || '');
+    const connectedLid = normalizeJid(this.client?.user?.lid || '');
+    return sameWhatsAppPhone(connectedOwner, owner)
+      && Boolean(connectedLid)
+      && normalizedSender === connectedLid;
+  }
+
+  isOwner(sender, aliases = []) {
+    return [sender, ...aliases].some(candidate => this.isOwnerIdentity(candidate));
+  }
+
+  isLinked(sender, aliases = []) {
+    return this.access.isLinked(sender, Date.now(), aliases);
+  }
+
+  isAuthorized(sender, aliases = []) {
+    if (!this.config.requireLinkedUsers) return true;
+    return this.isOwner(sender, aliases) || this.isLinked(sender, aliases);
   }
 
   async getGroupInfo(chatId, force = false) {
@@ -192,19 +236,113 @@ class CommandHandler {
     const admins = new Set(
       participants
         .filter(p => p?.admin === 'admin' || p?.admin === 'superadmin')
-        .map(p => normalizeJid(p.id))
+        .flatMap(p => [p.id, p.phoneNumber, p.jid])
+        .map(normalizeJid)
+        .filter(Boolean)
     );
-    const me = normalizeJid(this.client?.user?.id || '');
-    const botIsAdmin = admins.has(me);
+    const botIds = [this.client?.user?.id, this.client?.user?.lid]
+      .map(normalizeJid)
+      .filter(Boolean);
+    const botIsAdmin = botIds.some(id => admins.has(id));
     const value = { metadata, admins, botIsAdmin, expires: now + 30_000 };
     this.groupInfoCache.set(chatId, value);
     return value;
   }
 
-  async isAdminInGroup(chatId, sender) {
+  async isAdminInGroup(chatId, sender, aliases = []) {
     if (!this.isGroupChat(chatId)) return false;
     const info = await this.getGroupInfo(chatId);
-    return info.admins.has(normalizeJid(sender));
+    return [sender, ...aliases]
+      .map(normalizeJid)
+      .filter(Boolean)
+      .some(candidate => info.admins.has(candidate));
+  }
+
+  async deleteGroupMessage(chatId, message) {
+    if (!message?.key) return false;
+    const groupInfo = await this.getGroupInfo(chatId);
+    if (!groupInfo.botIsAdmin) return false;
+    await this.client.sendMessage(chatId, { delete: message.key });
+    return true;
+  }
+
+  async applyModerationAction(message, chatId, sender, result, reason = 'spam', aliases = []) {
+    if (!result || result.action === 'none') return false;
+    const targetJid = normalizeJid(sender);
+    if (!targetJid) return false;
+    const targetMention = `@${targetJid.split('@')[0]}`;
+    const subject = reason === 'link' ? 'enlace no permitido' : 'spam';
+
+    if (result.action === 'warn') {
+      await this.client.sendMessage(
+        chatId,
+        {
+          text: `⚠️ ${targetMention} ${subject} detectado. Aviso ${result.warnings}/${result.antiSpam.maxWarnings}.`,
+          mentions: [targetJid]
+        },
+        { quoted: message }
+      );
+      return true;
+    }
+
+    if (result.action === 'ban') {
+      const groupInfo = await this.getGroupInfo(chatId, true);
+      if (!groupInfo.botIsAdmin) {
+        await this.client.sendMessage(
+          chatId,
+          {
+            text: `⚠️ ${targetMention} recibió el aviso ${result.warnings}/${result.antiSpam.maxWarnings} por ${subject}, pero necesito ser administrador para expulsarlo.`,
+            mentions: [targetJid]
+          },
+          { quoted: message }
+        );
+        return true;
+      }
+      await this.client.groupParticipantsUpdate(chatId, [targetJid], 'remove');
+      await this.client.sendMessage(
+        chatId,
+        {
+          text: `🚫 ${targetMention} recibió el aviso ${result.warnings}/${result.antiSpam.maxWarnings} y fue expulsado por ${subject}.`,
+          mentions: [targetJid]
+        },
+        { quoted: message }
+      );
+      return true;
+    }
+
+    return false;
+  }
+
+  async enforceGroupModeration(message, metadata, parsed) {
+    const chatId = metadata.chatId;
+    const sender = metadata.sender;
+    if (!this.isGroupChat(chatId)) return false;
+    if (this.isOwner(sender, metadata.senderAliases || [])) return false;
+    if (await this.isAdminInGroup(chatId, sender, metadata.senderAliases || [])) return false;
+
+    if (this.moderation.isMuted(chatId, sender, Date.now())) {
+      await this.deleteGroupMessage(chatId, message).catch(error => {
+        logger.warning('Muted message could not be deleted', { error: error?.message || String(error) });
+      });
+      return true;
+    }
+
+    if (parsed) return false;
+    const body = normalizeText(getMessageText(message) || '');
+    if (!body) return false;
+
+    const antiLinks = this.moderation.getAntiLinks(chatId);
+    if (!antiLinks.enabled || !extractUrls(body).length) return false;
+
+    const deleted = await this.deleteGroupMessage(chatId, message);
+    if (!deleted) {
+      await this.reply(chatId, '⚠️ Detecté un enlace, pero necesito ser administrador para eliminarlo.', message);
+      return true;
+    }
+
+    const result = this.moderation.registerWarning(chatId, sender);
+    await this.applyModerationAction(message, chatId, sender, result, 'link');
+    return true;
   }
 
   async enforceAntiSpam(message, metadata, parsed) {
@@ -216,64 +354,66 @@ class CommandHandler {
     const body = normalizeText(getMessageText(message) || '');
     if (!body) return false;
 
-    if (this.isOwner(sender)) return false;
-    if (await this.isAdminInGroup(chatId, sender)) return false;
+    if (this.isOwner(sender, metadata.senderAliases || [])) return false;
+    if (await this.isAdminInGroup(chatId, sender, metadata.senderAliases || [])) return false;
 
     const result = this.moderation.evaluateMessage(chatId, sender, Date.now());
     if (result.action === 'none') return false;
-
-    if (result.action === 'warn') {
-      await this.sendText(
-        chatId,
-        `⚠️ @${normalizeJid(sender).split('@')[0]} spam detectado (${result.warnings}/${result.antiSpam.maxWarnings}).`,
-        message
-      );
-      return true;
-    }
-
-    if (result.action === 'ban') {
-      const groupInfo = await this.getGroupInfo(chatId, true);
-      if (!groupInfo.botIsAdmin) {
-        await this.sendText(chatId, `⚠️ Spam crítico de @${normalizeJid(sender).split('@')[0]} pero no tengo admin para expulsar.`, message);
-        return true;
-      }
-      await this.client.groupParticipantsUpdate(chatId, [normalizeJid(sender)], 'remove');
-      await this.sendText(chatId, `🚫 @${normalizeJid(sender).split('@')[0]} expulsado por spam reiterado.`, message);
-      return true;
-    }
-
-    return false;
+    return this.applyModerationAction(message, chatId, sender, result, 'spam');
   }
 
   async handleMessage(message, metadata = {}) {
     const chatId = metadata.chatId;
     const sender = metadata.sender;
+    const senderAliases = metadata.senderAliases || [];
     const quoted = metadata.quoted || null;
     const receivedAt = metadata.receivedAt || Date.now();
     const body = getMessageText(message).trim();
     const parsed = this.parseCommand(body);
 
     try {
-      await this.enforceAntiSpam(message, metadata, parsed);
+      const handled = await this.enforceGroupModeration(message, metadata, parsed);
+      if (handled) return;
+    } catch (error) {
+      logger.warning('Group moderation check failed', { error: error?.message || String(error) });
+    }
+
+    try {
+      const handled = await this.enforceAntiSpam(message, metadata, parsed);
+      if (handled) return;
     } catch (error) {
       logger.warning('AntiSpam check failed', { error: error?.message || String(error) });
     }
 
     if (!parsed) {
-      if (body.startsWith(this.config.prefix) || normalizeText(body).startsWith(this.config.prefix)) {
-        logger.warning('Command text not parsed', { body: normalizeText(body) });
-      }
+      // Silencio absoluto: solo respondemos a comandos explícitos con prefijo
+      // Messages without prefix are ignored completely
       return;
     }
 
-    if (this.isRateLimited(sender)) {
+    const owner = this.isOwner(sender, senderAliases);
+    if (!owner && this.isRateLimited(sender)) {
       await this.reply(chatId, '⚠️ Demasiados comandos seguidos. Intenta de nuevo en unos segundos.', quoted || message);
       return;
     }
 
     const plugin = this.getPlugin(parsed.command);
     if (!plugin) {
-      await this.reply(chatId, `⚠️ Comando no encontrado: ${parsed.command}`, quoted || message);
+      // Silencio absoluto: comandos desconocidos se ignoran completamente
+      return;
+    }
+
+    if (plugin.ownerOnly && !owner) {
+      await this.reply(chatId, '⛔ Solo el propietario puede usar este comando.', quoted || message);
+      return;
+    }
+
+    if (!owner && !this.isAuthorized(sender, senderAliases) && !plugin.publicAccess) {
+      await this.reply(
+        chatId,
+        `🔐 Este bot requiere vinculación. Solicita un código al propietario y envía ${this.config.prefix}vincular <codigo>.`,
+        quoted || message
+      );
       return;
     }
 
@@ -283,7 +423,7 @@ class CommandHandler {
     }
 
     if (plugin.adminOnly) {
-      const allowed = this.isOwner(sender) || (this.isGroupChat(chatId) && await this.isAdminInGroup(chatId, sender));
+      const allowed = owner || (this.isGroupChat(chatId) && await this.isAdminInGroup(chatId, sender, metadata.senderAliases || []));
       if (!allowed) {
         await this.reply(chatId, '⛔ Solo administradores pueden usar este comando.', quoted || message);
         return;
@@ -316,8 +456,10 @@ class CommandHandler {
       getMessageContent: () => getMessageContent(message),
       mediaInfo: getMediaInfo(message),
       isGroup: this.isGroupChat(chatId),
-      isOwner: this.isOwner(sender),
-      isAdmin: this.isGroupChat(chatId) ? await this.isAdminInGroup(chatId, sender) : false,
+      isOwner: owner,
+      isLinked: this.isLinked(sender, senderAliases),
+      senderAliases,
+      isAdmin: this.isGroupChat(chatId) ? await this.isAdminInGroup(chatId, sender, metadata.senderAliases || []) : false,
       getGroupInfo: () => this.getGroupInfo(chatId),
       handler: this
     };

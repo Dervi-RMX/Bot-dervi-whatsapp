@@ -3,66 +3,158 @@ const path = require('path');
 const { downloadWithYtDlp } = require('../lib/downloader');
 const { validateSafeUrl } = require('../lib/utils');
 
+const MAX_QUERY_LENGTH = 120;
+const MAX_SEARCH_RESULTS = 8;
+const SEARCH_TIMEOUT_MS = 15_000;
+const VIDEO_HOSTS = new Set(['tiktok.com', 'www.tiktok.com', 'vt.tiktok.com', 'vm.tiktok.com']);
+
+function normalizeClipQuery(value) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, MAX_QUERY_LENGTH);
+}
+
+function decodeHtml(value) {
+  return String(value || '')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/\\\//g, '/')
+    .replace(/\\u0026/gi, '&');
+}
+
 function decodeDuckHref(href) {
   if (!href) return null;
-  const raw = String(href).replace(/&amp;/g, '&');
+  const raw = decodeHtml(String(href));
   try {
-    if (raw.startsWith('/l/?') || raw.startsWith('https://duckduckgo.com/l/?') || raw.startsWith('//duckduckgo.com/l/?')) {
-      const absolute = raw.startsWith('http') ? raw : `https://duckduckgo.com${raw.startsWith('/') ? '' : '/'}${raw}`;
-      const u = new URL(absolute);
-      const target = u.searchParams.get('uddg');
-      if (target) return decodeURIComponent(target);
+    const absolute = raw.startsWith('//') ? `https:${raw}` : raw;
+    const url = new URL(absolute.startsWith('/') ? `https://duckduckgo.com${absolute}` : absolute);
+    if (/duckduckgo\.com$/i.test(url.hostname) && url.pathname === '/l/') {
+      return url.searchParams.get('uddg') || null;
     }
-  } catch {}
-  if (/^https?:\/\//i.test(raw)) return raw;
+    if (/google\./i.test(url.hostname) && url.pathname === '/url') {
+      return url.searchParams.get('q') || url.searchParams.get('url') || null;
+    }
+    if (/^https?:\/\//i.test(raw)) return raw;
+  } catch {
+    return null;
+  }
   return null;
 }
 
-function extractTikTokUrlsFromHtml(html) {
-  const urls = new Set();
-  const hrefRegex = /href="([^"]+)"/gi;
-  let m = null;
-  while ((m = hrefRegex.exec(html))) {
-    const url = decodeDuckHref(m[1]);
-    if (!url) continue;
-    if (!/tiktok\.com/i.test(url)) continue;
-    if (!/\/video\/\d+/i.test(url) && !/vt\.tiktok\.com/i.test(url) && !/vm\.tiktok\.com/i.test(url)) continue;
-    urls.add(url);
-    if (urls.size >= 25) break;
-  }
-  return Array.from(urls);
+function cleanTitle(value) {
+  return decodeHtml(String(value || '').replace(/<[^>]+>/g, ' '))
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 300);
 }
 
-function shuffle(array) {
-  const arr = [...array];
-  for (let i = arr.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [arr[i], arr[j]] = [arr[j], arr[i]];
+function isTikTokVideoUrl(value) {
+  try {
+    const url = new URL(String(value));
+    const hostname = url.hostname.toLowerCase();
+    if (!VIDEO_HOSTS.has(hostname)) return false;
+    if (hostname === 'vt.tiktok.com' || hostname === 'vm.tiktok.com') {
+      return url.pathname.length > 1;
+    }
+    return /\/video\/\d+/i.test(url.pathname);
+  } catch {
+    return false;
   }
-  return arr;
 }
 
-async function searchTikTokVideos(query) {
-  const q = encodeURIComponent(`site:tiktok.com ${query}`);
-  const url = `https://duckduckgo.com/html/?q=${q}`;
+function normalizeTikTokUrl(value) {
+  const decoded = decodeHtml(String(value || '')).replace(/[\\"'<>\s]+$/g, '');
+  if (!isTikTokVideoUrl(decoded)) return null;
+  try {
+    const url = new URL(decoded);
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function addResult(results, seen, rawUrl, title = '') {
+  const decoded = decodeDuckHref(rawUrl) || decodeHtml(rawUrl);
+  const url = normalizeTikTokUrl(decoded);
+  if (!url || seen.has(url)) return;
+  seen.add(url);
+  results.push({ url, title: cleanTitle(title) });
+}
+
+function extractTikTokResultsFromHtml(html) {
+  const source = String(html || '');
+  const results = [];
+  const seen = new Set();
+  const anchorRegex = /<a\b[^>]*\bhref\s*=\s*(?:"([^"]+)"|'([^']+)')[^>]*>([\s\S]*?)<\/a>/gi;
+  let match;
+
+  while ((match = anchorRegex.exec(source))) {
+    addResult(results, seen, match[1] || match[2], match[3]);
+    if (results.length >= 25) return results;
+  }
+
+  const urlRegex = /https?:\\?\/\\?(?:\/)?(?:www\.)?(?:tiktok\.com\/[^"'<>\s\\]+|vt\.tiktok\.com\/[^"'<>\s\\]+|vm\.tiktok\.com\/[^"'<>\s\\]+)/gi;
+  while ((match = urlRegex.exec(source))) {
+    addResult(results, seen, match[0]);
+    if (results.length >= 25) break;
+  }
+
+  return results;
+}
+
+async function fetchSearchHtml(url) {
   const response = await fetch(url, {
+    signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
     headers: {
+      'accept-language': 'es-ES,es;q=0.9,en;q=0.8',
       'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
     }
   });
   if (!response.ok) throw new Error(`search failed (${response.status})`);
-  const html = await response.text();
-  return extractTikTokUrlsFromHtml(html);
+  return response.text();
+}
+
+async function searchTikTokVideos(query) {
+  const encodedQuery = encodeURIComponent(query);
+  const sources = [
+    `https://www.tiktok.com/search?q=${encodedQuery}`,
+    `https://html.duckduckgo.com/html/?q=${encodeURIComponent(`site:tiktok.com ${query}`)}`,
+    `https://www.google.com/search?q=${encodeURIComponent(`site:tiktok.com/video ${query}`)}`
+  ];
+
+  const combined = [];
+  const seen = new Set();
+  for (const source of sources) {
+    try {
+      const html = await fetchSearchHtml(source);
+      for (const result of extractTikTokResultsFromHtml(html)) {
+        if (seen.has(result.url)) continue;
+        seen.add(result.url);
+        combined.push(result);
+      }
+      if (combined.length >= MAX_SEARCH_RESULTS) break;
+    } catch {
+      // Try the next public search source.
+    }
+  }
+  return combined;
+}
+
+function buildCaption(result, query) {
+  const title = cleanTitle(result?.title);
+  return title ? `🎬 ${title}` : `🎬 Resultado para: ${query}`;
 }
 
 module.exports = {
   name: 'clip',
   aliases: ['video', 'goku'],
-  description: 'Busca clips por tema y envía un video directamente',
+  description: 'Busca clips públicos de TikTok por tema y envía el resultado más relevante',
   async execute(context) {
-    const query = (context.args || []).join(' ').trim();
+    const query = normalizeClipQuery((context.args || []).join(' '));
     if (!query) {
-      await context.reply('⚠️ Usa: .clip <tema>\nEjemplo: .clip goku');
+      await context.reply('⚠️ Usa: .clip <tema>\nEjemplo: .clip goles de Messi');
       return;
     }
 
@@ -74,28 +166,29 @@ module.exports = {
     }
 
     if (!candidates.length) {
-      await context.reply('⚠️ No encontré clips para ese tema. Prueba con otra palabra.');
+      await context.reply(`⚠️ No encontré videos públicos para: ${query}`);
       return;
     }
 
     const cookiesPath = path.join(context.handler.config.tempDirectory || 'tmp', 'cookies.txt');
     const cookiesExist = fs.existsSync(cookiesPath);
-    const ordered = shuffle(candidates).slice(0, 8);
-
     let lastError = null;
-    for (const candidate of ordered) {
-      try {
-        const safe = await validateSafeUrl(candidate);
-        if (!safe.valid) continue;
-        const opts = { timeout: 180000 };
-        if (cookiesExist) opts.cookies = cookiesPath;
-        const dl = await downloadWithYtDlp(safe.url, context.handler.config.tempDirectory, opts);
-        if (!dl?.filePath) throw new Error('sin archivo');
 
-        await context.sendTempFile(dl.filePath, {
-          fileName: path.basename(dl.filePath),
+    for (const candidate of candidates.slice(0, MAX_SEARCH_RESULTS)) {
+      try {
+        const safe = await validateSafeUrl(candidate.url);
+        if (!safe.valid) continue;
+
+        const options = { timeout: 180000 };
+        if (cookiesExist) options.cookies = cookiesPath;
+        const download = await downloadWithYtDlp(safe.url, context.handler.config.tempDirectory, options);
+        if (!download?.filePath) throw new Error('yt-dlp no produjo archivo');
+
+        await context.sendTempFile(download.filePath, {
+          fileName: path.basename(download.filePath),
           mimeType: 'video/mp4',
-          kind: 'video'
+          kind: 'video',
+          caption: buildCaption(candidate, query)
         });
         return;
       } catch (error) {
@@ -103,8 +196,12 @@ module.exports = {
       }
     }
 
-    context.handler.logger?.warning?.('clip download failed', { error: String(lastError?.message || lastError || 'unknown') });
-    await context.reply('⚠️ No fue posible enviar un clip ahora. Intenta de nuevo en unos segundos.');
-  }
+    context.handler.logger?.warning?.('clip download failed', {
+      error: String(lastError?.message || lastError || 'unknown')
+    });
+    await context.reply('⚠️ Encontré resultados, pero no pude descargar un video público. Prueba con otra búsqueda.');
+  },
+  normalizeClipQuery,
+  isTikTokVideoUrl,
+  extractTikTokResultsFromHtml
 };
-
