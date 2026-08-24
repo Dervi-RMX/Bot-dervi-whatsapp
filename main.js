@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const http = require('http');
 const qr = require('qrcode-terminal');
 const pino = require('pino');
 const {
@@ -806,7 +807,28 @@ async function startBot() {
     }
   });
 
-  return { socket, handler };
+  // Start HTTP server for Render health checks
+  const port = process.env.PORT || 10000;
+  const server = http.createServer((req, res) => {
+    if (req.method === 'GET' && (req.url === '/' || req.url === '/health')) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'online',
+        service: 'BOT SANDBOX WhatsApp Bot',
+        timestamp: new Date().toISOString(),
+        whatsappConnected: !!socket.user?.id
+      }));
+    } else {
+      res.writeHead(404, { 'Content-Type': 'text/plain' });
+      res.end('Not Found');
+    }
+  });
+
+  server.listen(port, '0.0.0.0', () => {
+    logger.info(`HTTP server listening on port ${port}`);
+  });
+
+  return { socket, handler, server };
 }
 
 if (require.main === module) {
