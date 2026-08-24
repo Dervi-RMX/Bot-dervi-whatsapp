@@ -825,6 +825,16 @@ if (require.main === module) {
     releaseInstanceLock();
     process.exit(0);
   });
+  const http = require('http');
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain' });
+    res.end('Bot WhatsApp funcionando');
+  });
+
+  const port = process.env.PORT || 3000;
+  server.listen(port, () => {
+    console.log(`Servidor HTTP escuchando en el puerto ${port}`);
+  });
   startBot().catch(error => {
     logger.error('Fatal error starting BOT SANDBOX', { error: error.message });
     releaseInstanceLock();
