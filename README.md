@@ -172,6 +172,87 @@ Si prefieres usar Docker:
    docker-compose down
    ```
 
+## 🚀 Despliegue en Render (Free)
+
+Render permite alojar aplicaciones Node.js de forma gratuita con un servicio web que escucha en el puerto asignado por la variable de entorno `PORT`. El bot ya incluye un servidor HTTP interno que responde a `/` y `/health` para que puedas usar monitores externos (como UptimeRobot) y evitar que Render duerma el servicio.
+
+### Pasos para desplegar en Render
+
+1. **Crear una cuenta en Render**  
+   Regístrate en <https://render.com> (puedes usar GitHub para iniciar sesión).
+
+2. **Conectar tu repositorio**  
+   - En el dashboard de Render, haz clic en **“New +” → “Web Service”**.  
+   - Conecta tu repositorio de GitHub donde está este proyecto.  
+   - Elige la rama que deseas desplegar (por defecto `main` o `master`).
+
+3. **Configurar el servicio**  
+   - **Name**: cualquier nombre, por ejemplo `bot-sandbox-whatsapp`.  
+   - **Region**: elige la más cercana a ti.  
+   - **Branch**: `main` (o la que uses).  
+   - **Build Command**: `npm install`  
+   - **Start Command**: `npm start`  
+   - **Environment**: Node.js (el entorno por defecto).
+
+4. **Variables de entorno**  
+   En la sección **Environment**, agrega las mismas variables que tienes en tu archivo `.env` (excepto `PORT`, que Render la asigna automáticamente). Por ejemplo:
+   ```
+   BOT_PREFIX=.
+   BOT_REQUIRE_LINKED_USERS=true
+   BOT_RATE_LIMIT_WINDOW_MS=3000
+   BOT_RATE_LIMIT_MAX=4
+   BOT_DOWNLOAD_TIMEOUT=30000
+   BOT_MAX_FILE_SIZE=100
+   BOT_TEMP_DIR=tmp
+   BOT_SESSION_DIR=sessions
+   BOT_LOG_DIR=logs
+   BOT_DATA_DIR=data
+   BOT_ANTISPAM_WINDOW_SEC=10
+   BOT_ANTISPAM_MAX_MESSAGES=6
+   BOT_ANTISPAM_MAX_WARNINGS=3
+   BOT_ANTI_DELETE=true
+   BOT_ANTI_EDIT=true
+   OPENAI_API_KEY=tu_api_key_de_openai
+   GEMINI_API_KEY=tu_api_key_de_google
+   ```
+   Si no usas algunas integraciones, puedes dejar esas variables vacías.
+
+5. **Persistir la carpeta de sesiones**  
+   Para que el bot mantenga la autenticación de WhatsApp entre reinicios (Render Free tiene filesystem efímero), añade un **Persistent Disk**:
+   - En el dashboard del servicio, ve a la pestaña **“Disk”** y pulsa **“Add Disk”**.  
+   - **Name**: `whatsapp-sessions` (o cualquier nombre).  
+   - **Mount Path**: `/app/sessions` (esto hace que el disco aparezca dentro del contenedor en la ruta `sessions/` relativa al directorio del proyecto).  
+   - **Size**: 1 GB es más que suficiente.  
+   - **Plan**: elige el plan gratuito (disponible para la mayoría de los servicios).  
+   - Pulsa **“Create Disk”**.
+
+6. **Despliegue inicial**  
+   Guarda los cambios y Render comenzará a construir y desplegar tu servicio.  
+   - Una vez finalizado, verifica la URL del servicio (algo como `https://nombre-del-servicio.onrender.com`).  
+   - Visita la raíz (`/`) en tu navegador; deberías ver el texto **“Bot WhatsApp funcionando”**.  
+   - Visita `/health`; deberías ver un JSON con el estado del bot (incluye `whatsappConnected`).
+
+7. **Mantener el servicio activo con un monitor externo**  
+   Render duerme los servicios gratuitos tras 15 min de inactividad. Para evitarlo, usa un servicio externo que haga pings periódicos a tu endpoint `/health`:
+   - Regístrate en **UptimeRobot** (<https://uptimerobot.com>) (plan gratuito permite hasta 50 monitors con intervalo de 5 min).  
+   - Añade un nuevo monitor de tipo **HTTP(s)**, URL: `https://nombre-del-tuservicio.onrender.com/health`, intervalo **5 minutes**.  
+   - Mientras el monitor reciba `200 OK`, Render considerará el servicio activo y no lo enviará a modo sleep.
+
+8. **Escaneo del QR inicial**  
+   En los logs del servicio (pestaña “Logs” en Render) verás el mensaje “Escanea el QR con WhatsApp”.  
+   - Abre WhatsApp en tu teléfono → Ajustes > Dispositivos vinculados > Vincular un dispositivo.  
+   - Escanea el código QR que aparece en los logs.  
+   - Después de escanear, el bot mostrará “BOT SANDBOX ONLINE” y quedará listo para usar.
+
+9. **Reinicios y persistencia**  
+   Gracias al Persistent Disk montado en `/app/sessions`, la carpeta `sessions/` (donde Baileys guarda credenciales y claves) sobrevivirá a cada reinicio o ciclo de sueño/despertar. Si la sesión sigue válida, el bot se reconectará automáticamente sin necesidad de volver a escanear el QR. Si la sesión expira o es cerrada manualmente por WhatsApp, volverá a mostrar un nuevo QR en los logs.
+
+### Notas adicionales
+
+- No es necesario modificar el código; el servidor HTTP interno ya está preparado para escuchar en `0.0.0.0` usando `process.env.PORT || 10000` y responder correctamente a `/` y `/health`.  
+- El `.gitignore` ignora carpetas como `sessions/`, `logs/`, `data/` y `tmp/` para que no se suban accidentalmente al repositorio. En Render, el Persistent Disk garantiza que esos datos se mantengan entre despliegues.  
+- Si en algún momento deseas leer los logs de inicio para ver el QR, simplemente ve a la sección **Logs** del servicio en Render.
+
 ## 🛠️ Solución de problemas comunes
 
 ### "Error al iniciar el bot: BOT SANDBOX ya está ejecutándose"
