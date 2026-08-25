@@ -810,7 +810,12 @@ async function startBot() {
   // Start HTTP server for Render health checks
   const port = process.env.PORT || 10000;
   const server = http.createServer((req, res) => {
-    if (req.method === 'GET' && (req.url === '/' || req.url === '/health')) {
+    if (req.method === 'GET' && req.url === '/') {
+      // Maintain original response
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end('Bot WhatsApp funcionando');
+    } else if (req.method === 'GET' && req.url === '/health') {
+      // Health check endpoint
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         status: 'online',
@@ -819,6 +824,7 @@ async function startBot() {
         whatsappConnected: !!socket.user?.id
       }));
     } else {
+      // Not found
       res.writeHead(404, { 'Content-Type': 'text/plain' });
       res.end('Not Found');
     }
@@ -828,7 +834,7 @@ async function startBot() {
     logger.info(`HTTP server listening on port ${port}`);
   });
 
-  return { socket, handler, server };
+  return { socket, handler };
 }
 
 if (require.main === module) {
@@ -846,16 +852,6 @@ if (require.main === module) {
   process.on('SIGTERM', () => {
     releaseInstanceLock();
     process.exit(0);
-  });
-  const http = require('http');
-  const server = http.createServer((req, res) => {
-    res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Bot WhatsApp funcionando');
-  });
-
-  const port = process.env.PORT || 3000;
-  server.listen(port, () => {
-    console.log(`Servidor HTTP escuchando en el puerto ${port}`);
   });
   startBot().catch(error => {
     logger.error('Fatal error starting BOT SANDBOX', { error: error.message });
