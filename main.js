@@ -31,6 +31,7 @@ const banner = [
 let restarting = false;
 let httpServerStarted = false;
 let currentSocket = null;
+let currentSaveCreds = null;
 const instanceLockFile = path.join(__dirname, 'bot-sandbox.lock');
 const processedCommandsFile = path.join(config.dataDirectory, 'processed-commands.json');
 const processedCommandsTtlMs = 7 * 24 * 60 * 60 * 1000;
@@ -209,8 +210,31 @@ async function startBot() {
   logger.ensureLogFile(config.logDirectory);
   console.log(banner);
   console.log('\nIniciando WhatsApp...\n');
+  // Close existing socket if any
+  if (currentSocket) {
+    try {
+      if (typeof currentSocket.end === 'function') {
+        await currentSocket.end();
+      } else if (typeof currentSocket.close === 'function') {
+        await currentSocket.close();
+      }
+    } catch (err) {
+      logger.warning('Error closing previous WhatsApp socket', { error: err.message });
+    }
+    // Remove previous creds.update listener to avoid duplicates
+    if (currentSaveCreds && typeof currentSocket.ev.off === 'function') {
+      try {
+        currentSocket.ev.off('creds.update', currentSaveCreds);
+      } catch (err) {
+        logger.warning('Error removing creds.update listener', { error: err.message });
+      }
+    }
+    currentSocket = null;
+    currentSaveCreds = null;
+  }
 
   const { state, saveCreds } = await useMultiFileAuthState(config.sessionDirectory);
+  currentSaveCreds = saveCreds;
   const { version } = await fetchLatestBaileysVersion();
 
   // Auto-detect owner if not set in config
