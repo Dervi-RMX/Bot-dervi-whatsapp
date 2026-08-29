@@ -29,6 +29,8 @@ const banner = [
 ].join('\n');
 
 let restarting = false;
+let httpServerStarted = false;
+let currentSocket = null;
 const instanceLockFile = path.join(__dirname, 'bot-sandbox.lock');
 const processedCommandsFile = path.join(config.dataDirectory, 'processed-commands.json');
 const processedCommandsTtlMs = 7 * 24 * 60 * 60 * 1000;
@@ -237,6 +239,9 @@ async function startBot() {
     markOnlineOnConnect: true,
     browser: ['BOT SANDBOX', 'Chrome', '1.0.0']
   });
+
+  // Keep reference to current socket for HTTP health checks
+  currentSocket = socket;
 
   const sentMessageIds = new Set();
   const processedIncoming = new Map(); // id -> timestamp
@@ -807,32 +812,36 @@ async function startBot() {
     }
   });
 
-  // Start HTTP server for Render health checks
-  const port = process.env.PORT || 10000;
-  const server = http.createServer((req, res) => {
-    if (req.method === 'GET' && req.url === '/') {
-      // Maintain original response
-      res.writeHead(200, { 'Content-Type': 'text/plain' });
-      res.end('Bot WhatsApp funcionando');
-    } else if (req.method === 'GET' && req.url === '/health') {
-      // Health check endpoint
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        status: 'online',
-        service: 'BOT SANDBOX WhatsApp Bot',
-        timestamp: new Date().toISOString(),
-        whatsappConnected: !!socket.user?.id
-      }));
-    } else {
-      // Not found
-      res.writeHead(404, { 'Content-Type': 'text/plain' });
-      res.end('Not Found');
-    }
-  });
+  // Start HTTP server for Render health checks (only once)
+  if (!httpServerStarted) {
+    const port = process.env.PORT || 10000;
+    const server = http.createServer((req, res) => {
+      if (req.method === 'GET' && req.url === '/') {
+        // Maintain original response
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('Bot WhatsApp funcionando');
+      } else if (req.method === 'GET' && req.url === '/health') {
+        // Health check endpoint
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          status: 'online',
+          service: 'BOT SANDBOX WhatsApp Bot',
+          timestamp: new Date().toISOString(),
+          whatsappConnected: !!currentSocket?.user?.id
+        }));
+      } else {
+        // Not found
+        res.writeHead(404, { 'Content-Type': 'text/plain' });
+        res.end('Not Found');
+      }
+    });
 
-  server.listen(port, '0.0.0.0', () => {
-    logger.info(`HTTP server listening on port ${port}`);
-  });
+    server.listen(port, '0.0.0.0', () => {
+      logger.info(`HTTP server listening on port ${port}`);
+    });
+
+    httpServerStarted = true;
+  }
 
   return { socket, handler };
 }
