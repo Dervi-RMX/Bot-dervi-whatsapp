@@ -113,14 +113,52 @@ function getCategories() {
   return Object.keys(quizQuestions);
 }
 
+// State for active quizzes: Map<senderJid, { questionObj, attempts }>
+const activeQuizzes = new Map();
+
 module.exports = {
   name: 'quiz',
   aliases: [],
-  description: 'Juego de quiz con opciones múltiples: .quiz [categoría]',
+  description: 'Juego de quiz con opciones múltiples: .quiz [categoría] o .quiz respuesta <número>',
   groupOnly: false,
   adminOnly: false,
   async execute(context) {
     const args = context.args || [];
+    const senderJid = context.sender;
+
+    // If the first argument is "respuesta", handle the answer
+    if (args[0] && args[0].toLowerCase() === 'respuesta') {
+      const userState = activeQuizzes.get(senderJid);
+      if (!userState) {
+        await context.reply('⚠️ No hay un quiz activo. Usa .quiz para comenzar uno nuevo.');
+        return;
+      }
+
+      const answerNum = parseInt(args[1], 10);
+      if (isNaN(answerNum) || answerNum < 1 || answerNum > 4) {
+        await context.reply('⚠️ Por favor, responde con un número entre 1 y 4. Ejemplo: .quiz respuesta 2');
+        return;
+      }
+
+      const correctIndex = userState.questionObj.correctIndex;
+      const correctOptionNum = correctIndex + 1; // because options are 1-indexed for the user
+
+      if (answerNum === correctOptionNum) {
+        await context.reply(`✅ ¡Correcto! La respuesta era "${userState.questionObj.options[correctIndex]}"`);
+        activeQuizzes.delete(senderJid);
+      } else {
+        userState.attempts++;
+        if (userState.attempts < 3) {
+          await context.reply(`❌ Incorrecto. Te quedan ${3 - userState.attempts} intentos. Inténtalo de nuevo.`);
+        } else {
+          await context.reply(`❌ Se acabaron los intentos. La respuesta correcta era: "${userState.questionObj.options[correctIndex]}"`);
+          activeQuizzes.delete(senderJid);
+        }
+      }
+      return;
+    }
+
+    // Handle new quiz command
     const categoryArg = String(args[0] || '').toLowerCase();
 
     // Get available categories
@@ -154,6 +192,12 @@ module.exports = {
     }
 
     const questionObj = getRandomElement(questions);
+
+    // Set state for this user
+    activeQuizzes.set(senderJid, {
+      questionObj: questionObj,
+      attempts: 0
+    });
 
     // Format the category name for display
     const categoryDisplay = selectedCategory
