@@ -13,14 +13,19 @@ function normalizeClipQuery(value) {
 }
 
 function decodeHtml(value) {
-  return String(value || '')
-    .replace(/&amp;/gi, '&')
-    .replace(/&quot;/gi, '"')
-    .replace(/&#39;|&apos;/gi, "'")
-    .replace(/&lt;/gi, '<')
-    .replace(/&gt;/gi, '>')
-    .replace(/\\\//g, '/')
-    .replace(/\\u0026/gi, '&');
+  if (!value) return '';
+  const result = String(value)
+    .replace(/&/g, '&')
+    .replace(/</g, '<')
+    .replace(/>/g, '>')
+    .replace(/"/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#039;/g, "'")
+    .replace(/&#x2F;/g, '/')
+    .replace(/&#47;/g, '/')
+    .replace(/\\\//g, '/');
+  console.log('decodeHtml: input:', JSON.stringify(value), 'output:', JSON.stringify(result));
+  return result;
 }
 
 function decodeDuckHref(href) {
@@ -33,7 +38,7 @@ function decodeDuckHref(href) {
       return url.searchParams.get('uddg') || null;
     }
     if (/google\./i.test(url.hostname) && url.pathname === '/url') {
-      return url.searchParams.get('q') || url.searchParams.get('url') || null;
+      return url.searchParams.get('q') || null;
     }
     if (/^https?:\/\//i.test(raw)) return raw;
   } catch {
@@ -80,6 +85,7 @@ function addResult(results, seen, rawUrl, title = '') {
   const url = normalizeTikTokUrl(decoded);
   if (!url || seen.has(url)) return;
   seen.add(url);
+  console.log('addResult: title input:', JSON.stringify(title), 'cleanTitle output:', JSON.stringify(cleanTitle(title)));
   results.push({ url, title: cleanTitle(title) });
 }
 
@@ -95,12 +101,13 @@ function extractTikTokResultsFromHtml(html) {
     if (results.length >= 25) return results;
   }
 
-  const urlRegex = /https?:\\?\/\\?(?:\/)?(?:www\.)?(?:tiktok\.com\/[^"'<>\s\\]+|vt\.tiktok\.com\/[^"'<>\s\\]+|vm\.tiktok\.com\/[^"'<>\s\\]+)/gi;
+  const urlRegex = /https?:\/\/(www\.)?(?:tiktok\.com\/[^"'<>\s]+|vt\.tiktok\.com\/[^"'<>\s]+|vm\.tiktok\.com\/[^"'<>\s]+)/gi;
   while ((match = urlRegex.exec(source))) {
     addResult(results, seen, match[0]);
     if (results.length >= 25) break;
   }
 
+  console.log('extractTikTokResultsFromHtml results:', JSON.stringify(results, null, 2));
   return results;
 }
 
@@ -166,21 +173,18 @@ module.exports = {
     }
 
     if (!candidates.length) {
-      await context.reply(`⚠️ No encontré videos públicos para: ${query}`);
+      await context.reply(`⚠️ No encontramos videos públicos para: ${query}`);
       return;
     }
 
-    const cookiesPath = path.join(context.handler.config.tempDirectory || 'tmp', 'cookies.txt');
-    const cookiesExist = fs.existsSync(cookiesPath);
     let lastError = null;
-
     for (const candidate of candidates.slice(0, MAX_SEARCH_RESULTS)) {
       try {
         const safe = await validateSafeUrl(candidate.url);
         if (!safe.valid) continue;
 
         const options = { timeout: 180000 };
-        if (cookiesExist) options.cookies = cookiesPath;
+        // Try download without cookies first
         const download = await downloadWithYtDlp(safe.url, context.handler.config.tempDirectory, options);
         if (!download?.filePath) throw new Error('yt-dlp no produjo archivo');
 
@@ -193,13 +197,14 @@ module.exports = {
         return;
       } catch (error) {
         lastError = error;
+        // Optionally log and continue to next candidate
       }
     }
 
     context.handler.logger?.warning?.('clip download failed', {
       error: String(lastError?.message || lastError || 'unknown')
     });
-    await context.reply('⚠️ Encontré resultados, pero no pude descargar un video público. Prueba con otra búsqueda.');
+    await context.reply('⚠️ Encontramos resultados, pero no pudimos descargar un video público. Prueba con otra búsqueda.');
   },
   normalizeClipQuery,
   isTikTokVideoUrl,

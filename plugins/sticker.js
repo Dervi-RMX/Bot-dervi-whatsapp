@@ -1,215 +1,295 @@
 const path = require('path');
 const fs = require('fs');
+const sharp = require('sharp');
+const { detectMessageContent } = require('../lib/content-detector');
+const { downloadQuotedMedia, downloadUrlToTempFile } = require('../lib/downloader');
+const { extractUrls, validateSafeUrl } = require('../lib/utils');
+const { buildOutboundPayload, inferOutboundKindFromMime } = require('../lib/media');
 
-/**
- * Generador de stickers SIN APIs externas
- * Usa emojis predefinidos y lógica simple para crear stickers
- * Completamente autónomo - no requiere OPENAI_API_KEY ni ninguna API
- */
-
-// Base de emojis disponibles (lista completa sin dependencias externas)
-const EMOJIS_DISPONIBLES = [
-  '😀', '😁', '😂', '🤣', '😃', '😄', '😅', '😆', '😉', '😊',
-  '😋', '😎', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛',
-  '😜', '🤪', '🤨', '😢', '😭', '😓', '😰', '😪', '😫', '😌',
-  '😴', '🤔', '😤', '😠', '😡', '😒', '😓', '😔', '😖', '😞',
-  '😟', '😠', '😤', '😥', '😩', '😨', '😰', '😱', '😲', '😳',
-  '😵', '😶', '😷', '🤒', '🤕', '🤖', '🤠', '🤡', '🤥', '😈',
-  '👿', '👹', '👺', '💀', '💩', '☹️', '🙁', '😦', '😧', '😮',
-  '😯', '😪', '😴', '😪', '🤤', '😪', '😵', '💫', '💫'
-];
-
-const COLORS_DISPONIBLES = [
-  '❤️', '🧡', '💛', '💚', '💙', '💜', '🤍', '🖤', '💔', '💘',
-  '👍', '👎', '✅', '❌', '❤️‍🔥', '🎉', '🌟', '⭐', '🏆'
-];
-
-/**
- * Obtiene un emoji aleatorio de la base de datos
- * @returns {string} Emoji aleatorio
- */
-function obtenerEmojiAleatorio() {
-  return EMOJIS_DISPONIBLES[Math.floor(Math.random() * EMOJIS_DISPONIBLES.length)];
-}
-
-/**
- * Obtiene un emoji por palabra clave (búsqueda simple)
- * @param {string} texto - Texto a analizar
- * @returns {object} - Emoji y tipo de mapeo
- */
-function obtenerEmojiPorTexto(texto) {
-  const bajo = texto.toLowerCase().trim();
-
-  // Mapas simples palabra -> emoji (sin APIs)
-  const mapas = {
-    'feliz': '😀', 'contento': '😀', 'j': '😀',
-    'triste': '😢', 'depresión': '😢', 'sad': '😢',
-    'enojado': '😠', 'ira': '😠', 'angry': '😠',
-    'risa': '😂', 'jajaja': '😂', 'haha': '😂',
-    'sorpresa': '😮', 'wow': '😮', 'oh': '😮',
-    'hola': '👋', 'hello': '👋',
-    'gracias': '🙏', 'thank': '🙏',
-    'amor': '❤️', 'love': '❤️',
-    'fuego': '🔥', 'fire': '🔥',
-    'corazón': '❤️', 'heart': '❤️',
-    'estrella': '⭐', 'star': '⭐',
-    ' musica': '🎵', 'music': '🎵',
-    'comida': '🍕', 'eat': '🍴',
-    'dormir': '😴', 'sleep': '😴',
-    'lol': '😂', 'rofl': '😂', 'lmao': '🤣'
-  };
-
-  // Buscar coincidencia exacta o parcial
-  for (const [palabra, emoji] of Object.entries(mapas)) {
-    if (bajo.includes(palabra)) {
-      return { emoji, tipo: 'mapeado' };
-    }
-  }
-
-  // Si no hay coincidencia, retornar emoji aleatorio
-  return { emoji: obtenerEmojiAleatorio(), tipo: 'aleatorio' };
-}
-
-/**
- * Crea una descripción de sticker usando emojis
- * @param {string} texto - Texto del usuario (opcional)
- * @returns {string} - Descripción formateada del sticker
- */
-function crearDescripcionSticker(texto) {
-  let emoji;
-
-  if (texto && texto.trim()) {
-    const resultado = obtenerEmojiPorTexto(texto);
-    emoji = resultado.emoji;
-    const tipo = resultado.tipo;
-  } else {
-    emoji = obtenerEmojiAleatorio();
-  }
-
-  // Construir descripción simple
-  const partes = [emoji];
-
-  if (texto && texto.trim()) {
-    // Agregar texto resumido (máximo 20 chars)
-    const textoResp = texto.trim().slice(0, 20);
-    partes.push(textoResp);
-  }
-
-  // Agregar color aleatorio si no hay emoji específico
-  if (!EMOJIS_DISPONIBLES.includes(emoji)) {
-    partes.unshift(COLORS_DISPONIBLES[Math.floor(Math.random() * COLORS_DISPONIBLES.length)]);
-  }
-
-  return partes.join(' ');
-}
-
-/**
- * Envía un sticker simple por WhatsApp
- * @param {object} context - Contexto del mensaje
- * @param {string} emoji - Emoji a enviar
- * @param {string} texto - Texto opcional
- */
-async function enviarStickerSimple(context, emoji, texto) {
-  // Crear descripción del sticker
-  const descripcion = crearDescripcionSticker(texto);
-
-  // Intentar enviar como sticker si el cliente lo permite
+function isUrl(string) {
   try {
-    // Construir caption con el emoji
-    const caption = `🎨 ${descripcion}`;
-
-    // En modo sandbox, enviamos como texto con emoji
-    // En modo real, aquí se enviaría el buffer del sticker
-    await context.reply(caption);
-
-    // Alternativa: también podríamos intentar enviar un sticker real
-    // si el cliente lo soporta, pero usemos texto por ahora para confiabilidad
-    // await context.sendSticker(bufferEmoji, caption);
-
-  } catch (error) {
-    // Fallback completo - si falla todo, enviar solo el emoji
-    try {
-      await context.reply(`🎨 ${emoji}`);
-    } catch (e) {
-      // Último recurso: solo el emoji
-      await context.reply(emoji);
-    }
+    new URL(string);
+    return true;
+  } catch (_) {
+    return false;
   }
 }
 
 /**
- * Ejecuta el comando sticker
- * @param {object} context - Contexto del mensaje
+ * Converts an image to sticker format (WebP, 512x512 max)
+ * @param {Buffer|string} input - Buffer or file path
+ * @param {Object} options - Processing options
+ * @returns {Promise<Buffer>} - Processed sticker buffer
  */
-async function ejecutarComandoSticker(context) {
-  // Obtener texto de la args o del mensaje citado
-  const texto = context.args && context.args.length > 0
-    ? context.args.join(' ')
-    : '';
+async function convertToSticker(input, options = {}) {
+  let sharpInstance = sharp(input);
 
-  // Si hay texto citado (responder a un mensaje), usar ese texto
-  if (context.quotedMessage && context.quotedMessage?.text) {
-    const quotedText = context.getMessageText
-      ? context.getMessageText(context.quotedMessage)
-      : '';
-    if (quotedText) {
-      // Usar el texto del mensaje citado
-      const resultado = obtenerEmojiPorTexto(quotedText);
-      await enviarStickerSimple(context, resultado.emoji, quotedText);
-      return;
-    }
+  // Get metadata to determine dimensions
+  const metadata = await sharpInstance.metadata();
+  let width = metadata.width || 512;
+  let height = metadata.height || 512;
+
+  // Limit to 512x512 while preserving aspect ratio
+  const maxSize = 512;
+  if (width > maxSize || height > maxSize) {
+    const ratio = Math.min(maxSize / width, maxSize / height);
+    width = Math.round(width * ratio);
+    height = Math.round(height * ratio);
   }
 
-  // Si no hay texto, mostrar ayuda
-  if (!texto.trim()) {
-    await context.reply(`⚠️ Usa: .sticker <texto>\n\nEjemplos:\n• .sticker feliz\n• .sticker gracias\n• .sticker amor\n• .sticer hola\n• .sticker (respondiendo a un mensaje)`);
-    return;
-  }
+  // Ensure dimensions are even (required for WebP)
+  width = width - (width % 2);
+  height = height - (height % 2);
 
-  // Analizar el texto y generar sticker
-  const resultado = obtenerEmojiPorTexto(texto);
-
-  // Enviar el sticker
-  await enviarStickerSimple(context, resultado.emoji, texto);
+  // Convert to WebP with sticker settings
+  return sharpInstance
+    .resize(width, height, { fit: 'inside' })
+    .webp({ quality: 80 })
+    .toBuffer();
 }
 
 /**
- * Maneja .sticker cuando se responde a un mensaje
- * @param {object} context - Contexto del mensaje citado
+ * Extracts first frame from video/GIF and converts to sticker
+ * @param {string} filePath - Path to video/GIF file
+ * @returns {Promise<Buffer>} - Sticker buffer
  */
-async function manejarStickerCitado(context) {
-  // Obtener texto del mensaje citado
-  let texto = '';
+async function extractFirstFrameToSticker(filePath) {
+  // First, try to get a single frame using ffmpeg if available
+  // For now, we'll use a simpler approach: treat as image and let sharp handle it
+  // sharp can read some video formats but it's limited
 
-  if (context.quotedMessage?.contextInfo?.mentionedJid?.length) {
-    // Si mencionaron a alguien, usar texto simple
-    texto = 'saludo';
-  } else if (context.quotedMessage?.text) {
-    texto = context.getMessageText
-      ? context.getMessageText(context.quotedMessage)
-      : '';
-  } else {
-    // Si es una imagen u otro tipo de contenido citado
-    texto = 'emoji';
+  // Try to process directly with sharp (works for some formats)
+  try {
+    return await convertToSticker(filePath);
+  } catch (sharpError) {
+    // If sharp fails, we might need ffmpeg to extract frame
+    // For now, fall back to creating a basic sticker from first frame concept
+    // In a production environment, you'd use ffmpeg here
+    throw new Error(`Unable to process video/GIF: ${sharpError.message}. FFmpeg support needed for video processing.`);
   }
-
-  // Generar y enviar sticker
-  const resultado = obtenerEmojiPorTexto(texto);
-  await enviarStickerSimple(context, resultado.emoji, texto || 'sticker');
 }
 
-// Exportar módulo principal
 module.exports = {
   name: 'sticker',
   aliases: ['pega', 'pegatina', 'emoji'],
-  description: 'Genera stickers simples usando emojis (SIN APIs externas)',
+  description: 'Genera stickers: .sticker [texto] | .sticker [imagen/video/GIF/url] (responde a media o proporciona URL)',
+  groupOnly: false,
+  adminOnly: false,
   async execute(context) {
+    const args = context.args || [];
+    const query = args.join(' ').trim();
+
+    // Send processing indicator
+    let presenceSent = false;
     try {
-      await ejecutarComandoSticker(context);
+      if (typeof context.client.sendPresenceUpdate === 'function') {
+        await context.client.sendPresenceUpdate('composing', context.chatId);
+        presenceSent = true;
+      }
+    } catch (e) {
+      // ignore presence errors
+    }
+
+    try {
+      let filePath = null;
+      let sourceType = '';
+      let isFromUrl = false;
+
+      // Determine source: quoted message, URL in args, or text for emoji sticker
+      const detection = context.currentDetection || detectMessageContent(context.message);
+
+      // Check if there is a quoted message that is media
+      if (context.quotedMessage &&
+          ['image', 'video', 'sticker'].includes(detection.type)) {
+        filePath = await downloadQuotedMedia(context.quotedMessage, context.handler.config.tempDirectory);
+        sourceType = 'quoted';
+      }
+      // Check if args contain a URL
+      else if (args.length > 0) {
+        // Join args and check if it's a URL
+        const potentialUrl = args.join(' ').trim();
+        if (isUrl(potentialUrl)) {
+          const safe = await validateSafeUrl(potentialUrl);
+          if (!safe.valid) {
+            throw new Error('URL no segura');
+          }
+          filePath = (await downloadUrlToTempFile(safe.url, context.handler.config.tempDirectory)).filePath;
+          sourceType = 'url';
+          isFromUrl = true;
+        }
+        // If not a URL, treat as text for emoji sticker (existing behavior)
+        else {
+          // Fall back to original emoji-based sticker logic
+          const texto = query;
+          if (!texto.trim()) {
+            await context.reply(`⚠️ Usa: .sticker <texto> o responde a una imagen/video/GIF\n\nEjemplos:\n• .sticker feliz\n• .sticker gracias\n• .sticker amor\n• .sticker (respondiendo a un mensaje)`);
+            return;
+          }
+
+          // Original emoji-based sticker logic (simplified)
+          const EMOJIS_DISPONIBLES = [
+            '😀', '😁', '😂', '🤣', '😃', '😄', '😅', '😆', '😉', '😊',
+            '😋', '😎', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛',
+            '😜', '🤪', '🤨', '😢', '😭', '😓', '😰', '😪', '😫', '😌',
+            '😴', '🤔', '😤', '😠', '😡', '😒', '😓', '😔', '😖', '😞',
+            '😟', '😠', '😤', '😥', '😩', '😨', '😰', '😱', '😲', '😳',
+            '😵', '😶', '😷', '🤒', '🤕', '🤖', '🤠', '🤡', '🤥', '😈',
+            '👿', '👹', '👺', '💀', '💩', '☹️', '🙁', '😦', '😧', '😮',
+            '😯', '😪', '😴', '😪', '🤤', '😪', '😵', '💫', '💫'
+          ];
+
+          const COLORS_DISPONIBLES = [
+            '❤️', '🧡', '💛', '💚', '💙', '💜', '🤍', '🖤', '💔', '💘',
+            '👍', '👎', '✅', '❌', '❤️‍🔥', '🎉', '🌟', '⭐', '🏆'
+          ];
+
+          function obtenerEmojiAleatorio() {
+            return EMOJIS_DISPONIBLES[Math.floor(Math.random() * EMOJIS_DISPONIBLES.length)];
+          }
+
+          function obtenerEmojiPorTexto(texto) {
+            const bajo = texto.toLowerCase().trim();
+            const mapas = {
+              'feliz': '😀', 'contento': '😀', 'j': '😀',
+              'triste': '😢', 'depresión': '😢', 'sad': '😢',
+              'enojado': '😠', 'ira': '😠', 'angry': '😠',
+              'risa': '😂', 'jajaja': '😂', 'haha': '😂',
+              'sorpresa': '😮', 'wow': '😮', 'oh': '😮',
+              'hola': '👋', 'hello': '👋',
+              'gracias': '🙏', 'thank': '🙏',
+              'amor': '❤️', 'love': '❤️',
+              'fuego': '🔥', 'fire': '🔥',
+              'corazón': '❤️', 'heart': '❤️',
+              'estrella': '⭐', 'star': '⭐',
+              ' musica': '🎵', 'music': '🎵',
+              'comida': '🍕', 'eat': '🍴',
+              'dormir': '😴', 'sleep': '😴',
+              'lol': '😂', 'rofl': '😂', 'lmao': '🤣'
+            };
+
+            for (const [palabra, emoji] of Object.entries(mapas)) {
+              if (bajo.includes(palabra)) {
+                return { emoji, tipo: 'mapeado' };
+              }
+            }
+
+            return { emoji: obtenerEmojiAleatorio(), tipo: 'aleatorio' };
+          }
+
+          function crearDescripcionSticker(texto) {
+            let emoji;
+            if (texto && texto.trim()) {
+              const resultado = obtenerEmojiPorTexto(texto);
+              emoji = resultado.emoji;
+            } else {
+              emoji = obtenerEmojiAleatorio();
+            }
+
+            const partes = [emoji];
+            if (texto && texto.trim()) {
+              const textoResp = texto.trim().slice(0, 20);
+              partes.push(textoResp);
+            }
+
+            if (!EMOJIS_DISPONIBLES.includes(emoji)) {
+              partes.unshift(COLORS_DISPONIBLES[Math.floor(Math.random() * COLORS_DISPONIBLES.length)]);
+            }
+
+            return partes.join(' ');
+          }
+
+          async function enviarStickerSimple(context, emoji, texto) {
+            const descripcion = crearDescripcionSticker(texto);
+            try {
+              const caption = `🎨 ${descripcion}`;
+              await context.reply(caption);
+            } catch (error) {
+              try {
+                await context.reply(`🎨 ${emoji}`);
+              } catch (e) {
+                await context.reply(emoji);
+              }
+            }
+          }
+
+          const resultado = obtenerEmojiPorTexto(texto);
+          await enviarStickerSimple(context, resultado.emoji, texto);
+          return;
+        }
+      }
+      // If no args and no quoted message, show help
+      else {
+        await context.reply(`⚠️ Usa: .sticker <texto> o responde a una imagen/video/GIF\n\nEjemplos:\n• .sticker feliz\n• .sticker gracias\n• .sticker amor\n• .sticker (respondiendo a un mensaje)\n• .sticker https://ejemplo.com/imagen.jpg`);
+        return;
+      }
+
+      // Process the media file to create a sticker
+      if (filePath) {
+        let stickerBuffer;
+
+        try {
+          // Try to convert to sticker (works for images, some videos)
+          stickerBuffer = await convertToSticker(filePath);
+        } catch (convertError) {
+          // If direct conversion fails, try to extract frame from video/GIF
+          try {
+            stickerBuffer = await extractFirstFrameToSticker(filePath);
+          } catch (frameError) {
+            // If both fail, provide helpful error message
+            throw new Error(`No se pudo convertir el media a sticker. Asegúrate de que sea una imagen, video o GIF válido.`);
+          }
+        }
+
+        // Send the sticker
+        const outputPath = path.join(context.handler.config.tempDirectory, `sticker_${Date.now()}.webp`);
+        await fs.promises.writeFile(outputPath, stickerBuffer);
+
+        await context.sendTempFile(outputPath, {
+          fileName: 'sticker.webp',
+          mimeType: 'image/webp',
+          kind: 'sticker',
+          caption: `🎨 Sticker generado${sourceType === 'url' ? ' de URL' : ''}`
+        });
+
+        // Clean up input file
+        try {
+          await fs.promises.unlink(filePath);
+        } catch (e) {
+          // ignore
+        }
+      }
     } catch (error) {
-      console.error('Error en comando sticker:', error.message);
-      // Fallback final
-      await context.reply('🎨 Sticker generado');
+      // Clear presence on error
+      try {
+        if (presenceSent && typeof context.client.sendPresenceUpdate === 'function') {
+          await context.client.sendPresenceUpdate('paused', context.chatId).catch(() => null);
+          await context.client.sendPresenceUpdate('available', context.chatId).catch(() => null);
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      // Clean up any temporary files
+      if (filePath && fs.existsSync(filePath)) {
+        try {
+          await fs.promises.unlink(filePath);
+        } catch (e) {
+          // ignore
+        }
+      }
+
+      context.handler.logger?.warning?.('Sticker processing failed', { error: error?.message || String(error) });
+      await context.reply('⚠️ No fue posible generar el sticker. Asegúrate de que el media sea válido y vuelva a intentarlo.');
+    } finally {
+      // ensure any processing indicator is cleared
+      try {
+        if (presenceSent && typeof context.client.sendPresenceUpdate === 'function') {
+          await context.client.sendPresenceUpdate('paused', context.chatId).catch(() => null);
+          await context.client.sendPresenceUpdate('available', context.chatId).catch(() => null);
+        }
+      } catch (e) {
+        // ignore
+      }
     }
   }
 };

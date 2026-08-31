@@ -646,8 +646,18 @@ async function startBot() {
   });
 
   const recentWelcomeEvents = new Map();
+  const recentGoodbyeEvents = new Map();
 
   function renderWelcomeMessage(template, participantJids) {
+    const mentions = participantJids.map(jid => `@${String(jid).split('@')[0]}`);
+    const mentionText = mentions.join(', ');
+    const source = String(template || DEFAULT_WELCOME_MESSAGE);
+    return source.includes('{user}')
+      ? source.replace(/\{user\}/gi, mentionText)
+      : `${source}\n\n${mentionText}`;
+  }
+
+  function renderGoodbyeMessage(template, participantJids) {
     const mentions = participantJids.map(jid => `@${String(jid).split('@')[0]}`);
     const mentionText = mentions.join(', ');
     const source = String(template || DEFAULT_WELCOME_MESSAGE);
@@ -683,6 +693,36 @@ async function startBot() {
       logger.success('Welcome message sent', { chatId: update.id, participants });
     } catch (error) {
       logger.warning('Welcome message failed', { error: String(error?.message || error) });
+    }
+  });
+
+  socket.ev.on('group-participants.update', async update => {
+    try {
+      if (!update || update.action !== 'remove' || !update.id) return;
+      const participants = [...new Set(
+        (Array.isArray(update.participants) ? update.participants : [])
+          .map(participant => normalizeJid(participant))
+          .filter(participant => participant && !participant.endsWith('@g.us'))
+      )];
+      if (!participants.length) return;
+
+      const eventKey = `${update.id}|${update.action}|${participants.join(',')}`;
+      const now = Date.now();
+      const previous = recentGoodbyeEvents.get(eventKey) || 0;
+      if (now - previous < 10_000) return;
+      recentGoodbyeEvents.set(eventKey, now);
+      for (const [key, timestamp] of recentGoodbyeEvents.entries()) {
+        if (now - timestamp > 60_000) recentGoodbyeEvents.delete(key);
+      }
+
+      const settings = handler.moderation.getGoodbye(update.id);
+      if (!settings.enabled) return;
+
+      const text = renderGoodbyeMessage(settings.message, participants);
+      await socket.sendMessage(update.id, { text, mentions: participants });
+      logger.success('Goodbye message sent', { chatId: update.id, participants });
+    } catch (error) {
+      logger.warning('Goodbye message failed', { error: String(error?.message || error) });
     }
   });
 

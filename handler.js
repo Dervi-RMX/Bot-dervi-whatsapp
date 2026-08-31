@@ -1,12 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  getMessageText,
+  getMessageText, getMediaInfo,
   extractUrls,
   getQuotedMessage,
   isQuotedMessage,
-  getQuotedType,
-  getMediaInfo,
   getMessageContent,
   getContentType,
   ensureDir,
@@ -45,6 +43,90 @@ class CommandHandler {
     this.groupInfoCache = new Map(); // chatId -> { admins:Set, botIsAdmin:boolean, expires:number }
     this.moderation = new ModerationManager(config);
     this.access = new AccessManager(config);
+    this.persistentOwners = [];
+    this.bannedUsers = new Set();
+    this.loadPersistentOwners();
+    this.loadBannedUsers();
+  }
+
+  loadPersistentOwners() {
+    const ownersFile = path.join(this.config.dataDirectory, 'owners.json');
+    try {
+      if (fs.existsSync(ownersFile)) {
+        const data = fs.readFileSync(ownersFile, 'utf8');
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed.owners)) {
+          this.persistentOwners = parsed.owners.map(owner => normalizeJid(owner)).filter(Boolean);
+        }
+      }
+    } catch (error) {
+      logger.warning('Failed to load persistent owners', { error: error.message });
+      this.persistentOwners = [];
+    }
+  }
+
+  savePersistentOwners() {
+    const ownersFile = path.join(this.config.dataDirectory, 'owners.json');
+    try {
+      const data = JSON.stringify({ owners: this.persistentOwners }, null, 2);
+      fs.writeFileSync(ownersFile, data, 'utf8');
+    } catch (error) {
+      logger.warning('Failed to save persistent owners', { error: error.message });
+    }
+  }
+
+  addPersistentOwner(ownerJid) {
+    const normalized = normalizeJid(ownerJid);
+    if (!normalized) return false;
+    if (!this.persistentOwners.includes(normalized)) {
+      this.persistentOwners.push(normalized);
+      this.savePersistentOwners();
+      return true;
+    }
+    return false;
+  }
+
+  removePersistentOwner(ownerJid) {
+    const normalized = normalizeJid(ownerJid);
+    if (!normalized) return false;
+    const index = this.persistentOwners.indexOf(normalized);
+    if (index === -1) return false;
+    const mainOwner = normalizeJid(this.config.ownerJid || '');
+    if (mainOwner && normalized === mainOwner) return false;
+    this.persistentOwners.splice(index, 1);
+    this.savePersistentOwners();
+    return true;
+  }
+
+  loadBannedUsers() {
+    const bansFile = path.join(this.config.dataDirectory, 'bans.json');
+    try {
+      if (fs.existsSync(bansFile)) {
+        const data = fs.readFileSync(bansFile, 'utf8');
+        const parsed = JSON.parse(data);
+        if (Array.isArray(parsed.bans)) {
+          this.bannedUsers = new Set(parsed.bans.map(ban => normalizeJid(ban)).filter(Boolean));
+        }
+      }
+    } catch (error) {
+      logger.warning('Failed to load banned users', { error: error.message });
+      this.bannedUsers = new Set();
+    }
+  }
+
+  saveBannedUsers() {
+    const bansFile = path.join(this.config.dataDirectory, 'bans.json');
+    try {
+      const data = JSON.stringify({ bans: Array.from(this.bannedUsers) }, null, 2);
+      fs.writeFileSync(bansFile, data, 'utf8');
+    } catch (error) {
+      logger.warning('Failed to save banned users', { error: error.message });
+    }
+  }
+
+  isBanned(jid) {
+    const normalized = normalizeJid(jid);
+    return !!normalized && this.bannedUsers.has(normalized);
   }
 
   async loadPlugins() {
@@ -52,15 +134,57 @@ class CommandHandler {
     ensureDir(pluginsDir);
     const files = fs.readdirSync(pluginsDir).filter(file => file.endsWith('.js'));
     const next = new Map();
+    const pluginNames = new Set();
+    const pluginAliases = new Set();
 
     for (const file of files) {
-      const fullPath = path.join(pluginsDir, file);
-      delete require.cache[require.resolve(fullPath)];
-      const plugin = require(fullPath);
-      if (!plugin || !plugin.name || typeof plugin.execute !== 'function') continue;
-      next.set(plugin.name.toLowerCase(), plugin);
-      for (const alias of plugin.aliases || []) {
-        next.set(String(alias).toLowerCase(), plugin);
+      try {
+        const fullPath = path.join(pluginsDir, file);
+        delete require.cache[require.resolve(fullPath)];
+        const plugin = require(fullPath);
+
+        // Validate plugin has required properties
+        if (!plugin || !plugin.name || typeof plugin.execute !== 'function') {
+          logger.warning(`Plugin ${file} no tiene los requisitos necesarios (nombre y función execute)`, { file });
+          continue;
+        }
+
+        const pluginName = plugin.name.toLowerCase();
+
+        // Check for duplicate plugin names
+        if (pluginNames.has(pluginName)) {
+          logger.warning(`Nombre de plugin duplicado: ${plugin.name}. Usando la primera instancia.`, { pluginName });
+          continue;
+        }
+        pluginNames.add(pluginName);
+
+        // Check for duplicate aliases
+        if (plugin.aliases) {
+          for (const alias of plugin.aliases) {
+            const aliasLower = String(alias).toLowerCase();
+            if (pluginAliases.has(aliasLower)) {
+              logger.warning(`Alias de plugin duplicado: ${alias}. Este alias será ignorado.`, { alias, pluginName });
+              continue; // Skip this alias, but continue with the plugin
+            }
+            pluginAliases.add(aliasLower);
+          }
+        }
+
+        // Add plugin to the map
+        next.set(pluginName, plugin);
+
+        // Add aliases to the map
+        if (plugin.aliases) {
+          for (const alias of plugin.aliases) {
+            next.set(String(alias).toLowerCase(), plugin);
+          }
+        }
+
+        logger.info(`Plugin cargado: ${plugin.name}`, { pluginName });
+      } catch (error) {
+        logger.error(`Error cargando plugin ${file}`, { error: error.message, file });
+        // Continue with other plugins even if this one fails
+        continue;
       }
     }
 
@@ -204,6 +328,9 @@ class CommandHandler {
     if (!owner) return false;
     if (normalizedSender === owner || sameWhatsAppPhone(normalizedSender, owner)) return true;
 
+    // Check persistent owners
+    if (this.persistentOwners.includes(normalizedSender)) return true;
+
     // Also accept the connected account's LID when that account matches the
     // configured owner number.
     const connectedOwner = normalizeJid(this.client?.user?.id || '');
@@ -292,7 +419,7 @@ class CommandHandler {
           chatId,
           {
             text: `⚠️ ${targetMention} recibió el aviso ${result.warnings}/${result.antiSpam.maxWarnings} por ${subject}, pero necesito ser administrador para expulsarlo.`,
-            mentions: [targetJid]
+            mentions: [targetJent]
           },
           { quoted: message }
         );
@@ -370,6 +497,13 @@ class CommandHandler {
     const receivedAt = metadata.receivedAt || Date.now();
     const body = getMessageText(message).trim();
     const parsed = this.parseCommand(body);
+    this.currentSender = sender;
+
+    // Check if sender is banned
+    if (this.isBanned(sender)) {
+      // Silently ignore messages from banned users
+      return;
+    }
 
     try {
       const handled = await this.enforceGroupModeration(message, metadata, parsed);
@@ -386,14 +520,19 @@ class CommandHandler {
     }
 
     if (!parsed) {
+      // This is a normal message (not a command)
+      // Award XP for activity (with cooldown) if not the bot
+      const botId = normalizeJid(this.client?.user?.id || '');
+      const botLid = normalizeJid(this.client?.user?.lid || '');
+      const normalizedSender = normalizeJid(sender);
+      if (normalizedSender && normalizedSender !== botId && normalizedSender !== botLid) {
+        const xpPlugin = this.plugins.get('xp');
+        if (xpPlugin && typeof xpPlugin.awardActivityXP === 'function') {
+          await xpPlugin.awardActivityXP(sender);
+        }
+      }
       // Silencio absoluto: solo respondemos a comandos explícitos con prefijo
       // Messages without prefix are ignored completely
-      return;
-    }
-
-    const owner = this.isOwner(sender, senderAliases);
-    if (!owner && this.isRateLimited(sender)) {
-      await this.reply(chatId, '⚠️ Demasiados comandos seguidos. Intenta de nuevo en unos segundos.', quoted || message);
       return;
     }
 
@@ -403,30 +542,58 @@ class CommandHandler {
       return;
     }
 
-    if (plugin.ownerOnly && !owner) {
-      await this.reply(chatId, '⛔ Solo el propietario puede usar este comando.', quoted || message);
+    const owner = this.isOwner(sender, senderAliases);
+    const isGame = (() => {
+      // Check explicit category
+      if (plugin.category && typeof plugin.category === 'string' && plugin.category.toLowerCase() === 'games') {
+        return true;
+      }
+
+      // Check name pattern
+      const name = plugin.name.toLowerCase();
+      return ['ppt', 'quiz', 'trivia', 'dados', 'adivinanza'].some(k => name.includes(k));
+    })();
+    const allowReaction = owner || isGame;
+
+    // Only the owner can use non‑game commands; games are open to everyone.
+    if (!owner && !isGame) {
+      // Silencio absoluto: solo el propietario puede usar comandos no‑juego
       return;
     }
 
-    if (!owner && !this.isAuthorized(sender, senderAliases) && !plugin.publicAccess) {
-      await this.reply(
-        chatId,
-        `🔐 Este bot requiere vinculación. Solicita un código al propietario y envía ${this.config.prefix}vincular <codigo>.`,
-        quoted || message
-      );
-      return;
-    }
-
-    if (plugin.groupOnly && !this.isGroupChat(chatId)) {
-      await this.reply(chatId, '⚠️ Este comando solo funciona en grupos.', quoted || message);
-      return;
-    }
-
-    if (plugin.adminOnly) {
-      const allowed = owner || (this.isGroupChat(chatId) && await this.isAdminInGroup(chatId, sender, metadata.senderAliases || []));
-      if (!allowed) {
-        await this.reply(chatId, '⛔ Solo administradores pueden usar este comando.', quoted || message);
+    // For non‑game plugins we still apply the usual permission checks.
+    if (!isGame) {
+      // Rate limit (only applies to non‑game, non‑owner; owner already passed)
+      if (!owner && this.isRateLimited(sender)) {
+        await this.reply(chatId, '⚠️ Demasiados comandos seguidos. Intenta de nuevo en unos segundos.', quoted || message);
         return;
+      }
+
+      if (plugin.ownerOnly && !owner) {
+        await this.reply(chatId, '⛔ Solo el propietario puede usar este comando.', quoted || message);
+        return;
+      }
+
+      if (!owner && !this.isAuthorized(sender, senderAliases) && !plugin.publicAccess) {
+        await this.reply(
+          chatId,
+          `🔐 Este bot requiere vinculación. Solicita un código al propietario y envía ${this.config.prefix}vincular <codigo>.`,
+          quoted || message
+        );
+        return;
+      }
+
+      if (plugin.groupOnly && !this.isGroupChat(chatId)) {
+        await this.reply(chatId, '⚠️ Este comando solo funciona en grupos.', quoted || message);
+        return;
+      }
+
+      if (plugin.adminOnly) {
+        const allowed = owner || (this.isGroupChat(chatId) && await this.isAdminInGroup(chatId, sender, metadata.senderAliases || []));
+        if (!allowed) {
+          await this.reply(chatId, '⛔ Solo administradores pueden usar este comando.', quoted || message);
+          return;
+        }
       }
     }
 
@@ -437,15 +604,15 @@ class CommandHandler {
       message,
       quotedMessage,
       quoted: quoted || message,
-      chatId,
-      sender,
+      chatId: chatId,
+      sender: sender,
       args: parsed.args,
       command: parsed.command,
       prefix: this.config.prefix,
       receivedAt,
-      reply: text => this.reply(chatId, text, quoted || message),
-      sendText: text => this.sendText(chatId, text, quoted || message),
-      sendTempFile: (filePath, meta) => this.sendTempFile(chatId, filePath, meta, quoted || message),
+      reply: text => { if (!(owner || isGame)) return Promise.resolve(); return this.reply(chatId, text, quoted || message); },
+      sendText: text => { if (!(owner || isGame)) return Promise.resolve(); return this.sendText(chatId, text, quoted || message); },
+      sendTempFile: (filePath, meta) => { if (!(owner || isGame)) return Promise.resolve(); return this.sendTempFile(chatId, filePath, meta, quoted || message); },
       detectContent: () => detectMessageContent(message),
       currentDetection: detection,
       isQuotedMessage: () => isQuotedMessage(message),
@@ -456,7 +623,7 @@ class CommandHandler {
       getMessageContent: () => getMessageContent(message),
       mediaInfo: getMediaInfo(message),
       isGroup: this.isGroupChat(chatId),
-      isOwner: owner,
+      isOwner: owner || isGame,
       isLinked: this.isLinked(sender, senderAliases),
       senderAliases,
       isAdmin: this.isGroupChat(chatId) ? await this.isAdminInGroup(chatId, sender, metadata.senderAliases || []) : false,
@@ -486,6 +653,16 @@ class CommandHandler {
       const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Plugin timeout')), timeoutMs));
       await Promise.race([execPromise, timeoutPromise]);
       logger.success('✓ Response sent');
+      // Add random emoji reaction for owner or game
+      if (allowReaction) {
+        const emojis = ['🖕','🤟','🤘','😈','👿','👹','👺','👻','☠️','💀','👾','🫵','☠️'];
+        const reaction = emojis[Math.floor(Math.random() * emojis.length)];
+        try {
+          await this.client.sendMessage(chatId, { react: { text: reaction, key: context.message.key } });
+        } catch (e) {
+          // ignore reaction errors
+        }
+      }
     } catch (error) {
       if (String(error?.message || '').includes('Plugin timeout')) {
         logger.warning(`Plugin timeout in ${plugin.name}`);
