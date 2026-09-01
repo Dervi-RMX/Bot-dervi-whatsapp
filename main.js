@@ -241,7 +241,12 @@ async function startBot() {
   let effectiveOwnerJid = config.ownerJid;
   if (!effectiveOwnerJid && state.creds.me) {
     // Use the authenticated user's JID as the owner if not explicitly set
-    effectiveOwnerJid = state.creds.me.id || state.creds.me;
+    const me = state.creds.me;
+    effectiveOwnerJid = (me && me.id) || me || '';
+    // Ensure we have a string JID
+    if (typeof effectiveOwnerJid !== 'string') {
+      effectiveOwnerJid = String(effectiveOwnerJid);
+    }
     autoDetectedOwnerJid = effectiveOwnerJid;
     logger.info('Owner auto-detected from credentials', { ownerJid: effectiveOwnerJid });
     // Update config so that handler sees the owner
