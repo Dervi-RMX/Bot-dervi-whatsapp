@@ -393,6 +393,37 @@ Algunas formas de dar crédito incluyen:
 - Mencionar "Basado en BOT SANDBOX" en tu README o descripción
 - Dar una estrella ⭐ al repositorio original si lo encuentras útil
 
+## 🤖 Sistema de subbots
+
+El bot principal puede administrar varias conexiones independientes de WhatsApp usando los mismos plugins, sin compartir sesiones.
+
+Comandos disponibles para el propietario:
+
+```text
+.subbot crear
+.subbot lista
+.subbot conectar SUB-001
+.subbot conectar SUB-001 521XXXXXXXXXX
+.subbot info SUB-001
+.subbot apagar SUB-001
+.subbot encender SUB-001
+.subbot eliminar SUB-001
+.subbot ayuda
+.confirmar
+```
+
+Para crear el primer subbot, ejecuta `.subbot crear` desde el bot principal. El administrador generará una sesión propia en `sessions/SUB-001/` y enviará el QR al mismo chat donde ejecutaste el comando. Después de escanearlo con el número secundario, el subbot se reconectará automáticamente al reiniciar el bot principal.
+
+También puedes vincularlo sin QR usando el número completo con código de país:
+
+```text
+.subbot conectar SUB-001 521XXXXXXXXXX
+```
+
+El código de emparejamiento llegará al mismo chat donde ejecutaste el comando. En el WhatsApp del número secundario, abre `Ajustes > Dispositivos vinculados > Vincular con número de teléfono` y escribe el código.
+
+Las sesiones, la configuración persistente y los archivos temporales de cada subbot se guardan en carpetas separadas y están protegidos por `.gitignore`. Nunca subas `sessions/`, `.env`, `data/`, `logs/`, `tmp/` ni `node_modules/` al repositorio.
+
 ## 📄 Licencia
 
 Este proyecto está bajo la Licencia MIT - ver el archivo [LICENSE](LICENSE) para detalles.

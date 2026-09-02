@@ -563,7 +563,12 @@ class CommandHandler {
         'pay'
       ].some(k => name.includes(k));
     })();
-    const isPublicCommand = isGame || plugin.name.toLowerCase() === 'play';
+    const isSubbotPublicCommand = this.config.isSubbot === true
+      && !plugin.ownerOnly
+      && !plugin.adminOnly;
+    const isPublicCommand = isGame
+      || plugin.name.toLowerCase() === 'play'
+      || isSubbotPublicCommand;
     const allowReaction = owner || isPublicCommand;
 
     // Only games and .play are public; every other command is owner-only.
@@ -575,6 +580,10 @@ class CommandHandler {
     // Public commands still use their normal group/rate-limit checks.
     if (isPublicCommand) {
       if (!owner && this.isRateLimited(sender)) {
+        return;
+      }
+      if (plugin.groupOnly && !this.isGroupChat(chatId)) {
+        await this.reply(chatId, '⚠️ Este comando solo funciona en grupos.', quoted || message);
         return;
       }
     } else {

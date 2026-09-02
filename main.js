@@ -14,6 +14,7 @@ const {
 const config = require('./config');
 const logger = require('./lib/logger');
 const CommandHandler = require('./handler');
+const SubbotManager = require('./lib/subbot-manager');
 const { ensureDir, getMessageText, getMediaInfo } = require('./lib/utils');
 const { normalizeJid, DEFAULT_WELCOME_MESSAGE } = require('./lib/moderation');
 const { inferOutboundKindFromMime, buildOutboundPayload } = require('./lib/media');
@@ -32,6 +33,7 @@ let restarting = false;
 let httpServerStarted = false;
 let currentSocket = null;
 let currentSaveCreds = null;
+let currentSubbotManager = null;
 const instanceLockFile = path.join(__dirname, 'bot-sandbox.lock');
 const processedCommandsFile = path.join(config.dataDirectory, 'processed-commands.json');
 const processedCommandsTtlMs = 7 * 24 * 60 * 60 * 1000;
@@ -212,6 +214,10 @@ async function startBot() {
   console.log('\nIniciando WhatsApp...\n');
   // Close existing socket if any
   if (currentSocket) {
+    if (currentSubbotManager) {
+      await currentSubbotManager.stopAll();
+      currentSubbotManager = null;
+    }
     try {
       if (typeof currentSocket.end === 'function') {
         await currentSocket.end();
@@ -605,10 +611,14 @@ async function startBot() {
   const handler = new CommandHandler(socket, config);
   await handler.loadPlugins();
   handler.startMaintenance();
+  const subbotManager = new SubbotManager(socket, config);
+  currentSubbotManager = subbotManager;
+  handler.subbots = subbotManager;
+  let subbotsStarted = false;
 
   socket.ev.on('creds.update', saveCreds);
 
-  socket.ev.on('connection.update', update => {
+  socket.ev.on('connection.update', async update => {
     if (update.qr) {
       console.log('Escanea el QR con WhatsApp.\n');
       qr.generate(update.qr, { small: true });
@@ -616,6 +626,10 @@ async function startBot() {
     }
 
     if (update.connection === 'open') {
+      if (!subbotsStarted) {
+        subbotsStarted = true;
+        await subbotManager.startExisting();
+      }
       logger.success('✓ WhatsApp conectado correctamente.');
       console.log('\nBOT SANDBOX ONLINE');
       console.log(`Prefix: ${config.prefix}`);
