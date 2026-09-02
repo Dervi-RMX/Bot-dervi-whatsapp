@@ -331,12 +331,18 @@ Este bot está diseñado para funcionar en:
 - Usa el instalaor estándar de Node.js
 - Ejecuta comandos en PowerShell o CMD
 - Recomendado: Usar [Windows Terminal](https://aka.ms/terminal)
-- **Nota**: El bot incluye una versión empaquetada de `yt-dlp.exe` para descargar videos de TikTok y YouTube. No necesitas instalar nada adicional para estas funciones en Windows.
+- **Nota**: El repositorio incluye `yt-dlp.exe` y `ffmpeg-static` se instala automáticamente mediante `npm install`. No subas `node_modules/`; después de clonar, ejecuta:
+  ```powershell
+  npm install
+  npm start
+  ```
+- `.play` usa el FFmpeg instalado por `ffmpeg-static`, por lo que no depende de una instalación global de FFmpeg en Windows.
 
 ### Linux (Ubuntu, Debian, CentOS, etc.)
 - Instala Node.js desde el repositorio oficial o usa NodeSource
 - Funciona en cualquier distribución moderna
 - Compatible con WSL (Windows Subsystem for Linux)
+- Ejecuta `npm install`; `ffmpeg-static` instalará el binario compatible con Node.js. Para otros comandos que descargan video, instala también `yt-dlp` o coloca el binario correspondiente en el `PATH`.
 
 ### Termux (Android)
 - Instala Termux desde F-Droid o Google Play

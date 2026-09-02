@@ -551,35 +551,35 @@ class CommandHandler {
 
       // Check name pattern
       const name = plugin.name.toLowerCase();
-      return ['ppt', 'quiz', 'trivia', 'dados', 'adivinanza'].some(k => name.includes(k));
+      return [
+        'ppt',
+        'quiz',
+        'trivia',
+        'dados',
+        'adivinanza',
+        'economy',
+        'balance',
+        'work',
+        'pay'
+      ].some(k => name.includes(k));
     })();
-    const allowReaction = owner || isGame;
+    const isPublicCommand = isGame || plugin.name.toLowerCase() === 'play';
+    const allowReaction = owner || isPublicCommand;
 
-    // Only the owner can use non‑game commands; games are open to everyone.
-    if (!owner && !isGame) {
-      // Silencio absoluto: solo el propietario puede usar comandos no‑juego
+    // Only games and .play are public; every other command is owner-only.
+    if (!owner && !isPublicCommand) {
+      // Silencio absoluto: los comandos no autorizados se ignoran completamente.
       return;
     }
 
-    // For non‑game plugins we still apply the usual permission checks.
-    if (!isGame) {
+    // Public commands still use their normal group/rate-limit checks.
+    if (isPublicCommand) {
+      if (!owner && this.isRateLimited(sender)) {
+        return;
+      }
+    } else {
       // Rate limit (only applies to non‑game, non‑owner; owner already passed)
       if (!owner && this.isRateLimited(sender)) {
-        await this.reply(chatId, '⚠️ Demasiados comandos seguidos. Intenta de nuevo en unos segundos.', quoted || message);
-        return;
-      }
-
-      if (plugin.ownerOnly && !owner) {
-        await this.reply(chatId, '⛔ Solo el propietario puede usar este comando.', quoted || message);
-        return;
-      }
-
-      if (!owner && !this.isAuthorized(sender, senderAliases) && !plugin.publicAccess) {
-        await this.reply(
-          chatId,
-          `🔐 Este bot requiere vinculación. Solicita un código al propietario y envía ${this.config.prefix}vincular <codigo>.`,
-          quoted || message
-        );
         return;
       }
 
@@ -610,9 +610,9 @@ class CommandHandler {
       command: parsed.command,
       prefix: this.config.prefix,
       receivedAt,
-      reply: text => { if (!(owner || isGame)) return Promise.resolve(); return this.reply(chatId, text, quoted || message); },
-      sendText: text => { if (!(owner || isGame)) return Promise.resolve(); return this.sendText(chatId, text, quoted || message); },
-      sendTempFile: (filePath, meta) => { if (!(owner || isGame)) return Promise.resolve(); return this.sendTempFile(chatId, filePath, meta, quoted || message); },
+      reply: text => { if (!(owner || isPublicCommand)) return Promise.resolve(); return this.reply(chatId, text, quoted || message); },
+      sendText: text => { if (!(owner || isPublicCommand)) return Promise.resolve(); return this.sendText(chatId, text, quoted || message); },
+      sendTempFile: (filePath, meta) => { if (!(owner || isPublicCommand)) return Promise.resolve(); return this.sendTempFile(chatId, filePath, meta, quoted || message); },
       detectContent: () => detectMessageContent(message),
       currentDetection: detection,
       isQuotedMessage: () => isQuotedMessage(message),
@@ -623,7 +623,7 @@ class CommandHandler {
       getMessageContent: () => getMessageContent(message),
       mediaInfo: getMediaInfo(message),
       isGroup: this.isGroupChat(chatId),
-      isOwner: owner || isGame,
+      isOwner: owner,
       isLinked: this.isLinked(sender, senderAliases),
       senderAliases,
       isAdmin: this.isGroupChat(chatId) ? await this.isAdminInGroup(chatId, sender, metadata.senderAliases || []) : false,
@@ -649,7 +649,9 @@ class CommandHandler {
     try {
       // enforce plugin timeout
       const execPromise = plugin.execute(context);
-      const timeoutMs = this.config.pluginTimeoutMs || 60000;
+      const timeoutMs = plugin.name.toLowerCase() === 'play'
+        ? Math.max(this.config.pluginTimeoutMs || 60000, 240000)
+        : (this.config.pluginTimeoutMs || 60000);
       const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Plugin timeout')), timeoutMs));
       await Promise.race([execPromise, timeoutPromise]);
       logger.success('✓ Response sent');

@@ -1,6 +1,7 @@
 const { detectMessageContent } = require('../lib/content-detector');
 const { extractUrls, validateSafeUrl } = require('../lib/utils');
 const { downloadWithYtDlp } = require('../lib/downloader');
+const fs = require('fs');
 const path = require('path');
 
 function isUrl(string) {
@@ -36,7 +37,7 @@ module.exports = {
       urlToDownload = query;
     } else {
       // Treat as search query for YouTube
-      urlToDownload = `ytsearch:${query}`;
+      urlToDownload = `ytsearch1:${query}`;
     }
 
     // Send processing indicator (no message, just presence)
@@ -50,35 +51,35 @@ module.exports = {
       // ignore presence errors
     }
 
+    let downloadedFilePath = null;
     try {
       const dl = await downloadWithYtDlp(
         urlToDownload,
         context.handler.config.tempDirectory,
         {
           timeout: Math.max(120000, Number(context.handler.config.downloadTimeout || 120000)),
-          // We want audio only if possible? But the user might want video.
-          // We'll let yt-dlp choose the best format, but we can prefer audio/music.
-          // For simplicity, we'll use the default behavior of yt-dlp (best quality).
-          // If we want to force audio, we can add '-x --audio-format mp3' but that might not be what the user wants.
-          // We'll leave it as is and let the user specify if they want audio only by using .ytmp3 or similar.
-          // For .play, we'll download the best available format.
+          audioOnly: true,
+          audioFormat: 'mp3',
+          format: 'bestaudio/best',
+          jsRuntimes: [],
+          ffmpegLocation: require('ffmpeg-static')
         }
       );
 
       if (!dl || !dl.filePath) {
         throw new Error('No se descargó el archivo');
       }
+      downloadedFilePath = dl.filePath;
 
       // Determine if it's audio or video based on mime type or extension
-      const mimeType = dl.mimeType || '';
-      const isAudio = mimeType.startsWith('audio/');
-      const isVideo = mimeType.startsWith('video/');
+      const mimeType = dl.mimeType || 'audio/mpeg';
+      const isAudio = mimeType.startsWith('audio/') || /\.mp3$/i.test(dl.filePath);
 
       await context.sendTempFile(dl.filePath, {
         fileName: path.basename(dl.filePath),
-        mimeType: dl.mimeType || 'application/octet-stream',
-        kind: isAudio ? 'audio' : (isVideo ? 'video' : 'document'),
-        caption: isAudio ? '🎵 Audio descargado' : (isVideo ? '🎬 Video descargado' : '📄 Archivo descargado')
+        mimeType,
+        kind: isAudio ? 'audio' : 'document',
+        caption: '🎵 Audio descargado'
       });
 
       // Clear presence
@@ -103,6 +104,10 @@ module.exports = {
 
       context.handler.logger?.warning?.('Play download failed', { error: error?.message || String(error) });
       await context.reply('⚠️ No fue posible descargar el contenido. Puede que la URL no sea válida, el contenido no esté disponible o haya ocurrido un error.');
+    } finally {
+      if (downloadedFilePath) {
+        await fs.promises.unlink(downloadedFilePath).catch(() => null);
+      }
     }
   }
 };

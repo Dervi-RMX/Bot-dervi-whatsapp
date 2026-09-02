@@ -17,7 +17,7 @@ const CommandHandler = require('./handler');
 const { ensureDir, getMessageText, getMediaInfo } = require('./lib/utils');
 const { normalizeJid, DEFAULT_WELCOME_MESSAGE } = require('./lib/moderation');
 const { inferOutboundKindFromMime, buildOutboundPayload } = require('./lib/media');
-const { downloadQuotedMedia } = require('./lib/downloader');
+const { downloadQuotedMedia, downloadUrlToTempFile } = require('./lib/downloader');
 
 const banner = [
   '╔══════════════════════════════════════╗',
@@ -653,13 +653,43 @@ async function startBot() {
   const recentWelcomeEvents = new Map();
   const recentGoodbyeEvents = new Map();
 
-  function renderWelcomeMessage(template, participantJids) {
+  function formatWelcomeDate(date = new Date()) {
+    return new Intl.DateTimeFormat('es-ES', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    }).format(date);
+  }
+
+  function renderWelcomeMessage(template, participantJids, groupName, memberCount) {
     const mentions = participantJids.map(jid => `@${String(jid).split('@')[0]}`);
     const mentionText = mentions.join(', ');
     const source = String(template || DEFAULT_WELCOME_MESSAGE);
-    return source.includes('{user}')
-      ? source.replace(/\{user\}/gi, mentionText)
-      : `${source}\n\n${mentionText}`;
+    const dateText = formatWelcomeDate();
+
+    if (source === DEFAULT_WELCOME_MESSAGE) {
+      return [
+        `❀ Bienvenido${participantJids.length > 1 ? 's' : ''} a "${groupName}" 🥷🏻🌑`,
+        '',
+        `☆ Usuario${participantJids.length > 1 ? 's' : ''} » ${mentionText} 😈`,
+        '',
+        `◆ Ahora somos ${memberCount} ${memberCount === 1 ? 'Miembro' : 'Miembros'}.`,
+        '',
+        `❀ Fecha » ${dateText}`,
+        '',
+        '☾ Disfruta tu estadía en el grupo 🖤',
+        '',
+        'CYBERGROUP COMMUNITY'
+      ].join('\n');
+    }
+
+    const rendered = source
+      .replace(/\{user\}/gi, mentionText)
+      .replace(/\{group\}/gi, groupName)
+      .replace(/\{members\}/gi, String(memberCount))
+      .replace(/\{date\}/gi, dateText)
+      .replace(/\{fecha\}/gi, dateText);
+    return source.match(/\{user\}/i) ? rendered : `${rendered}\n\n${mentionText}`;
   }
 
   function renderGoodbyeMessage(template, participantJids) {
@@ -693,29 +723,89 @@ async function startBot() {
       const settings = handler.moderation.getWelcome(update.id);
       if (!settings.enabled) return;
 
-      // If there's a welcome photo, send it with the message as caption
-      if (settings.photoUrl) {
-        try {
-          // Render the welcome message first
-          const welcomeText = renderWelcomeMessage(settings.message, participants);
+      const metadata = await socket.groupMetadata(update.id);
+      const groupName = String(metadata?.subject || 'este grupo');
+      const memberCount = Array.isArray(metadata?.participants)
+        ? metadata.participants.length
+        : 0;
+      const welcomeText = renderWelcomeMessage(
+        settings.message,
+        participants,
+        groupName,
+        memberCount
+      );
+      const temporaryFiles = [];
+      let imageBuffer = null;
 
-          // Download the photo to a temporary file
-          const downloadResult = await handler.handler.downloadUrlToTempFile(settings.photoUrl, config.tempDirectory);
-          const tempImagePath = downloadResult.filePath;
-          const imageBuffer = await fs.promises.readFile(tempImagePath);
-          await socket.sendMessage(update.id, { image: imageBuffer, caption: welcomeText, mentions: participants });
-        } catch (photoError) {
-          logger.warning("Failed to send welcome photo, falling back to text", { error: photoError.message });
-          // Fallback to text-only message
-          const fallbackText = renderWelcomeMessage(settings.message, participants);
-          await socket.sendMessage(update.id, { text: fallbackText, mentions: participants });
-          logger.success('Welcome message sent (fallback)', { chatId: update.id, participants });
+      try {
+        const member = metadata?.participants?.find(entry => {
+          const ids = [entry?.id, entry?.jid, entry?.phoneNumber]
+            .map(normalizeJid)
+            .filter(Boolean);
+          return ids.includes(participants[0]);
+        });
+        const profileJids = [...new Set([
+          participants[0],
+          member?.id,
+          member?.jid,
+          member?.phoneNumber
+        ].map(normalizeJid).filter(Boolean))];
+
+        for (const profileJid of profileJids) {
+          try {
+            const profileUrl = await socket.profilePictureUrl(profileJid, 'image');
+            if (!profileUrl) continue;
+            const downloadResult = await downloadUrlToTempFile(
+              profileUrl,
+              config.tempDirectory
+            );
+            temporaryFiles.push(downloadResult.filePath);
+            imageBuffer = await fs.promises.readFile(downloadResult.filePath);
+            break;
+          } catch {
+            // Try the next JID representation before using the fallback image.
+          }
         }
-      } else {
-        // Send text-only welcome message
-        const welcomeText = renderWelcomeMessage(settings.message, participants);
-        await socket.sendMessage(update.id, { text: welcomeText, mentions: participants });
+      } catch (profileError) {
+        logger.warning('No se pudo obtener la foto del nuevo miembro', {
+          participant: participants[0],
+          error: String(profileError?.message || profileError)
+        });
+      }
+
+      if (!imageBuffer) {
+        if (settings.photoUrl) {
+          try {
+            const fallbackDownload = await downloadUrlToTempFile(
+              settings.photoUrl,
+              config.tempDirectory
+            );
+            temporaryFiles.push(fallbackDownload.filePath);
+            imageBuffer = await fs.promises.readFile(fallbackDownload.filePath);
+          } catch (fallbackError) {
+            logger.warning('No se pudo obtener la imagen alternativa configurada', {
+              error: String(fallbackError?.message || fallbackError)
+            });
+          }
+        }
+      }
+
+      if (!imageBuffer) {
+        const fallbackImagePath = path.join(__dirname, 'assets', 'fallback.webp');
+        imageBuffer = await fs.promises.readFile(fallbackImagePath);
+      }
+
+      try {
+        await socket.sendMessage(update.id, {
+          image: imageBuffer,
+          caption: welcomeText,
+          mentions: participants
+        });
         logger.success('Welcome message sent', { chatId: update.id, participants });
+      } finally {
+        await Promise.all(
+          temporaryFiles.map(filePath => fs.promises.unlink(filePath).catch(() => null))
+        );
       }
     } catch (error) {
       logger.warning('Welcome message failed', { error: String(error?.message || error) });

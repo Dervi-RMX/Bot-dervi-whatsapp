@@ -96,13 +96,18 @@ const WORK_JOBS = [
 
 module.exports = {
   name: 'economy',
-  aliases: [],
+  aliases: ['balance', 'bal', 'work', 'pay'],
   description: 'Sistema de economía: .balance, .work, .pay',
   groupOnly: false,
   adminOnly: false,
   async execute(context) {
     const args = context.args || [];
-    const subcmd = (args[0] || '').toLowerCase();
+    const command = String(context.command || '').toLowerCase();
+    const directCommand = ['balance', 'bal', 'work', 'pay'].includes(command)
+      ? command
+      : '';
+    const subcmd = directCommand || (args[0] || '').toLowerCase();
+    const commandArgs = directCommand ? args : args.slice(1);
 
     // Load economy data
     let economyData = loadEconomyData();
@@ -111,13 +116,13 @@ module.exports = {
     let targetJid;
     if (subcmd === 'pay') {
       // For pay, the target is the first argument after the command
-      const targetContext = { ...context, args: args.slice(1) };
+      const targetContext = { ...context, args: commandArgs };
       targetJid = extractTargetJid(targetContext);
     } else {
       // For balance/work, we use the sender (or target if specified in args for balance?)
       // But balance and work are for the sender only, unless we want to allow checking others?
       // We'll allow .balance @user to check another user's balance.
-      const targetContext = { ...context, args };
+      const targetContext = { ...context, args: commandArgs };
       targetJid = extractTargetJid(targetContext) || context.sender;
     }
 
@@ -150,7 +155,7 @@ module.exports = {
 
       await context.reply(`💼 Trabajaste como ${job}.\n💰 Ganaste ${formatMoney(amount)}.\n\n💰 Tu nuevo balance es ${formatMoney(userData.balance)}`);
     } else if (subcmd === 'pay') {
-      const amountStr = String(args[1] || '').trim();
+      const amountStr = String(commandArgs[1] || '').trim();
       const amount = parseFloat(amountStr);
       const senderJid = context.sender;
 
