@@ -109,9 +109,9 @@ module.exports = {
     }
 
     // Build help text
-    let help = `🤖 DERVI BOT\n`;
-    help += `⚡ Prefijo: ${prefix}   👤 Usuario: ${ownerInfo}\n`;
-    help += `🧩 Plugins: ${totalPlugins}   📋 Comandos: ${totalCommands}   🏷️ Aliases: ${totalAliases}\n\n`;
+    let help = `🤖 *DERVI BOT*\n`;
+    help += `⚡ *Prefijo:* ${prefix}   👤 *Usuario:* ${ownerInfo}\n`;
+    help += `🧩 *Plugins:* ${totalPlugins}   📋 *Comandos:* ${totalCommands}   🏷️ *Aliases:* ${totalAliases}\n\n`;
 
     // Process each category
     for (const catDef of categoryDefs) {
@@ -129,7 +129,7 @@ module.exports = {
         const subcommands = subcommandsMap[name] || [];
 
         // Main command line
-        let line = `• .${name}`;
+        let line = `• *.${name}*`;
         if (aliases.length > 0) {
           line += ` (${aliases.map(a => `.${a}`).join('/')})`;
         }
@@ -141,9 +141,9 @@ module.exports = {
 
         // Subcommands
         if (subcommands.length > 0) {
-          help += `    Subcomandos:\n`;
+          help += `    *Subcomandos:*\n`;
           for (const sub of subcommands) {
-            help += `      • .${sub}\n`;
+            help += `      • *.${sub}*\n`;
           }
         }
 
@@ -153,7 +153,7 @@ module.exports = {
       help += '\n'; // blank line between categories
     }
 
-    help += `💡 Escribe .<comando> para usar\n`;
+    help += `💡 Escribe *.${{prefix}}<comando>* para usar\n`;
 
     // Try to load banner image
     const bannerPath = path.resolve(__dirname, '..', 'assets', '9984643a-f46c-4cc1-acbd-75eba5bde0c2.png');
@@ -172,7 +172,11 @@ module.exports = {
       if (bannerBuffer) {
         const tempFilePath = path.join(context.handler.config.tempDirectory, `help_banner_${Date.now()}_${Math.random().toString(36).substring(2, 9)}.png`);
         await fs.promises.writeFile(tempFilePath, bannerBuffer);
-        await context.sendTempFile(context.chatId, tempFilePath, { caption: help }, context.quoted || context.message);
+        await context.sendTempFile(tempFilePath, {
+          caption: help,
+          mimeType: 'image/png',
+          kind: 'image'
+        });
         // Clean up
         await fs.promises.unlink(tempFilePath).catch(() => {});
       } else {

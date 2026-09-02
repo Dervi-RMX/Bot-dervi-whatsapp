@@ -693,9 +693,30 @@ async function startBot() {
       const settings = handler.moderation.getWelcome(update.id);
       if (!settings.enabled) return;
 
-      const text = renderWelcomeMessage(settings.message, participants);
-      await socket.sendMessage(update.id, { text, mentions: participants });
-      logger.success('Welcome message sent', { chatId: update.id, participants });
+      // If there's a welcome photo, send it with the message as caption
+      if (settings.photoUrl) {
+        try {
+          // Render the welcome message first
+          const welcomeText = renderWelcomeMessage(settings.message, participants);
+
+          // Download the photo to a temporary file
+          const downloadResult = await handler.handler.downloadUrlToTempFile(settings.photoUrl, config.tempDirectory);
+          const tempImagePath = downloadResult.filePath;
+          const imageBuffer = await fs.promises.readFile(tempImagePath);
+          await socket.sendMessage(update.id, { image: imageBuffer, caption: welcomeText, mentions: participants });
+        } catch (photoError) {
+          logger.warning("Failed to send welcome photo, falling back to text", { error: photoError.message });
+          // Fallback to text-only message
+          const fallbackText = renderWelcomeMessage(settings.message, participants);
+          await socket.sendMessage(update.id, { text: fallbackText, mentions: participants });
+          logger.success('Welcome message sent (fallback)', { chatId: update.id, participants });
+        }
+      } else {
+        // Send text-only welcome message
+        const welcomeText = renderWelcomeMessage(settings.message, participants);
+        await socket.sendMessage(update.id, { text: welcomeText, mentions: participants });
+        logger.success('Welcome message sent', { chatId: update.id, participants });
+      }
     } catch (error) {
       logger.warning('Welcome message failed', { error: String(error?.message || error) });
     }

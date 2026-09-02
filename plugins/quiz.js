@@ -115,6 +115,7 @@ function getCategories() {
 
 // State for active quizzes: Map<senderJid, { questionObj, attempts }>
 const activeQuizzes = new Map();
+const MAX_ATTEMPTS = 3;
 
 module.exports = {
   name: 'quiz',
@@ -148,8 +149,8 @@ module.exports = {
         activeQuizzes.delete(senderJid);
       } else {
         userState.attempts++;
-        if (userState.attempts < 3) {
-          await context.reply(`❌ Incorrecto. Te quedan ${3 - userState.attempts} intentos. Inténtalo de nuevo.`);
+        if (userState.attempts < MAX_ATTEMPTS) {
+          await context.reply(`❌ Incorrecto. Te quedan ${MAX_ATTEMPTS - userState.attempts} intentos. Inténtalo de nuevo.`);
         } else {
           await context.reply(`❌ Se acabaron los intentos. La respuesta correcta era: "${userState.questionObj.options[correctIndex]}"`);
           activeQuizzes.delete(senderJid);

@@ -2,6 +2,7 @@ module.exports = {
   name: 'moneda',
   aliases: ['coinflip'],
   description: 'Lanzar una moneda: .moneda',
+  category: 'games',
   groupOnly: false,
   adminOnly: false,
   async execute(context) {
