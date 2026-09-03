@@ -23,6 +23,28 @@ function isUrl(string) {
   }
 }
 
+function scheduleAudioDeletion(context, sentMessage) {
+  const messageKey = sentMessage?.key;
+  if (!messageKey?.id || !context.client?.sendMessage) return;
+
+  const deletionDelay = 20 * 60 * 1000;
+  setTimeout(async () => {
+    try {
+      await context.client.sendMessage(context.chatId, { delete: messageKey });
+      context.handler.logger?.info?.('Audio de .play eliminado automáticamente', {
+        chatId: context.chatId,
+        messageId: messageKey.id
+      });
+    } catch (error) {
+      context.handler.logger?.warning?.('No se pudo eliminar automáticamente el audio de .play', {
+        chatId: context.chatId,
+        messageId: messageKey.id,
+        error: error?.message || String(error)
+      });
+    }
+  }, deletionDelay);
+}
+
 module.exports = {
   name: 'play',
   aliases: [],
@@ -86,12 +108,13 @@ module.exports = {
       const mimeType = dl.mimeType || 'audio/mpeg';
       const isAudio = mimeType.startsWith('audio/') || /\.mp3$/i.test(dl.filePath);
 
-      await context.sendTempFile(dl.filePath, {
+      const sentMessage = await context.sendTempFile(dl.filePath, {
         fileName: path.basename(dl.filePath),
         mimeType,
         kind: isAudio ? 'audio' : 'document',
         caption: '🎵 Audio descargado'
       });
+      scheduleAudioDeletion(context, sentMessage);
 
       // Clear presence
       try {
