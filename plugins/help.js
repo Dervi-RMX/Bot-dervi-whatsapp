@@ -3,7 +3,7 @@ const path = require('path');
 
 module.exports = {
   name: 'help',
-  aliases: [],
+  aliases: ['hell'],
   description: 'Muestra ayuda dinámica del bot con todos los comandos disponibles',
   async execute(context) {
     const config = context.handler?.config || {};
@@ -30,7 +30,11 @@ module.exports = {
       if (plugin.ownerOnly) perms.push('👑 Owner');
       if (plugin.adminOnly) perms.push('🛡️ Admin');
       if (plugin.groupOnly) perms.push('👥 Grupo');
-      if (!plugin.ownerOnly && !plugin.adminOnly && !plugin.groupOnly) perms.push('🌎 Público');
+      const publicNames = new Set(['play', 'clip', 'facebook', 'instagram']);
+      if ((!plugin.ownerOnly && !plugin.adminOnly && !plugin.groupOnly)
+        || publicNames.has(plugin.name.toLowerCase())) {
+        perms.push('🌎 Público');
+      }
       return perms;
     }
 
@@ -38,6 +42,8 @@ module.exports = {
     const subcommandsMap = {
       group: ['admins', 'link', 'setname', 'setdesc', 'kick', 'add', 'promote', 'demote', 'tagall', 'hidetag'],
       warn: ['warn', 'warnings', 'unwarn', 'resetwarn'],
+      economy: ['balance', 'work', 'pay'],
+      subbot: ['crear', 'lista', 'conectar SUB-001', 'conectar SUB-001 NUMERO', 'info SUB-001', 'apagar SUB-001', 'encender SUB-001', 'eliminar SUB-001', 'ayuda'],
     };
 
     // Determine category for each plugin
@@ -67,7 +73,7 @@ module.exports = {
       } else {
         // 2. pattern matching fallback
         const name = plugin.name.toLowerCase();
-        if (['owner', 'vincular'].includes(name)) catId = 'owner';
+        if (['owner', 'vincular', 'subbot', 'confirmar', 'codigo'].includes(name)) catId = 'owner';
         else if (['group', 'bienvenida', 'despedida', 'reglas'].some(k => name.includes(k))) catId = 'groups';
         else if (['antilinks', 'antispam', 'warn', 'silenciar', 'ban'].some(k => name.includes(k))) catId = 'moderation';
         else if (['chatgpt', 'gemini', 'ia', 'vision', 'ocr', 'resumen', 'imagine', 'translate'].some(k => name.includes(k))) catId = 'ai';
@@ -109,9 +115,17 @@ module.exports = {
     }
 
     // Build help text
-    let help = `🤖 *DERVI BOT*\n`;
-    help += `⚡ *Prefijo:* ${prefix}   👤 *Usuario:* ${ownerInfo}\n`;
-    help += `🧩 *Plugins:* ${totalPlugins}   📋 *Comandos:* ${totalCommands}   🏷️ *Aliases:* ${totalAliases}\n\n`;
+    let help = [
+      '╭━━━〔 🤖 DERVI BOT 〕━━━╮',
+      `┃ ⚡ Prefijo: ${prefix}`,
+      `┃ 🧩 Plugins: ${totalPlugins}  •  🏷️ Aliases: ${totalAliases}`,
+      `┃ 👤 Owner: ${ownerInfo}`,
+      '╰━━━━━━━━━━━━━━━━━━━━━━╯',
+      '',
+      '✨ *CENTRO DE COMANDOS*',
+      'Usa el prefijo antes de cada comando.',
+      ''
+    ].join('\n');
 
     // Process each category
     for (const catDef of categoryDefs) {
@@ -119,7 +133,7 @@ module.exports = {
       const pluginList = categorized[catId];
       if (pluginList.length === 0) continue;
 
-      help += `${catDef.label}\n`;
+      help += `\n${catDef.label}\n`;
 
       for (const plugin of pluginList) {
         const name = plugin.name;
@@ -129,21 +143,21 @@ module.exports = {
         const subcommands = subcommandsMap[name] || [];
 
         // Main command line
-        let line = `• *.${name}*`;
+        let line = `┃ *${prefix}${name}*`;
         if (aliases.length > 0) {
-          line += ` (${aliases.map(a => `.${a}`).join('/')})`;
+          line += ` (${aliases.map(a => `${prefix}${a}`).join('/')})`;
         }
         if (perms.length > 0) {
           line += ` [${perms.join(' · ')}]`;
         }
-        line += `  ${desc}`;
+        line += `\n┃   ${desc}`;
         help += line + '\n';
 
         // Subcommands
         if (subcommands.length > 0) {
-          help += `    *Subcomandos:*\n`;
+          help += `┃   *Subcomandos:*\n`;
           for (const sub of subcommands) {
-            help += `      • *.${sub}*\n`;
+            help += `┃   • *${prefix}${name} ${sub}*\n`;
           }
         }
 
@@ -153,7 +167,8 @@ module.exports = {
       help += '\n'; // blank line between categories
     }
 
-    help += `💡 Escribe *.${{prefix}}<comando>* para usar\n`;
+    help += `\n💡 Ejemplo: *${prefix}ping*\n`;
+    help += '🔐 Los comandos administrativos requieren permisos.\n';
 
     // Try to load banner image
     const bannerPath = path.resolve(__dirname, '..', 'assets', '9984643a-f46c-4cc1-acbd-75eba5bde0c2.png');
