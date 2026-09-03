@@ -147,3 +147,4 @@ tmp/
 sessions/
 data/
 bot-sandbox.lock
+bin/

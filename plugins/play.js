@@ -4,6 +4,16 @@ const { downloadWithYtDlp } = require('../lib/downloader');
 const fs = require('fs');
 const path = require('path');
 
+function resolveFfmpeg() {
+  const localPath = path.join(__dirname, '..', 'bin', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+  if (fs.existsSync(localPath)) return localPath;
+  try {
+    return require('ffmpeg-static');
+  } catch {
+    return null;
+  }
+}
+
 function isUrl(string) {
   try {
     new URL(string);
@@ -62,7 +72,7 @@ module.exports = {
           audioFormat: 'mp3',
           format: 'bestaudio/best',
           jsRuntimes: [],
-          ffmpegLocation: require('ffmpeg-static')
+          ffmpegLocation: resolveFfmpeg()
         }
       );
 

@@ -424,6 +424,8 @@ El código de emparejamiento llegará al mismo chat donde ejecutaste el comando.
 
 Las sesiones, la configuración persistente y los archivos temporales de cada subbot se guardan en carpetas separadas y están protegidos por `.gitignore`. Nunca subas `sessions/`, `.env`, `data/`, `logs/`, `tmp/` ni `node_modules/` al repositorio.
 
+En Windows, `.play` puede usar opcionalmente los binarios locales `bin/ffmpeg.exe` y `bin/ffprobe.exe`. Esa carpeta se excluye de Git porque `ffmpeg.exe` supera el límite de tamaño de archivos de GitHub; en instalaciones nuevas se usa automáticamente `ffmpeg-static` después de ejecutar `npm ci`.
+
 ## 🗃️ Organización de datos
 
 El proyecto usa un almacén central en `lib/data-store.js` para leer y escribir los JSON locales con escritura atómica y permisos privados. Los archivos de datos siguen siendo compatibles con las instalaciones existentes:
