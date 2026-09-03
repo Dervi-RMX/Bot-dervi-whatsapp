@@ -20,6 +20,7 @@ const { createDataStore } = require('./lib/data-store');
 const logger = require('./lib/logger');
 const { getStatsManager } = require('./lib/stats');
 const { createTempCleaner } = require('./lib/temp-cleaner');
+const { getProfileStore } = require('./lib/profile');
 
 function sameWhatsAppPhone(left, right) {
   const normalize = value => {
@@ -48,6 +49,7 @@ class CommandHandler {
     this.moderation = new ModerationManager(config);
     this.access = new AccessManager(config);
     this.stats = getStatsManager(config.dataDirectory);
+    this.profiles = getProfileStore(config.dataDirectory);
     this.tempCleaner = createTempCleaner(config.tempDirectory, { maxAgeMs: config.tempFileMaxAgeMs });
     this.persistentOwners = [];
     this.bannedUsers = new Set();
@@ -502,7 +504,17 @@ class CommandHandler {
     const body = getMessageText(message).trim();
     const parsed = this.parseCommand(body);
     this.stats.recordMessage(sender, this.isGroupChat(chatId) ? chatId : null);
+    this.profiles.recordMessage(
+      [sender, ...senderAliases],
+      { pushName: message?.pushName, name: message?.pushName }
+    );
     if (parsed) this.stats.recordCommand(sender, this.isGroupChat(chatId) ? chatId : null);
+    if (parsed) {
+      this.profiles.recordCommand(
+        [sender, ...senderAliases],
+        { pushName: message?.pushName, name: message?.pushName }
+      );
+    }
     this.currentSender = sender;
 
     // Check if sender is banned
@@ -572,7 +584,7 @@ class CommandHandler {
     const isSubbotPublicCommand = this.config.isSubbot === true
       && !plugin.ownerOnly
       && !plugin.adminOnly;
-    const publicCommandNames = new Set(['play', 'clip', 'facebook', 'instagram']);
+    const publicCommandNames = new Set(['play', 'clip', 'facebook', 'instagram', 'perfil']);
     const isPublicCommand = isGame
       || publicCommandNames.has(plugin.name.toLowerCase())
       || isSubbotPublicCommand;
@@ -628,7 +640,17 @@ class CommandHandler {
       receivedAt,
       reply: text => { if (!(owner || isPublicCommand)) return Promise.resolve(); return this.reply(chatId, text, quoted || message); },
       sendText: text => { if (!(owner || isPublicCommand)) return Promise.resolve(); return this.sendText(chatId, text, quoted || message); },
-      sendTempFile: (filePath, meta) => { if (!(owner || isPublicCommand)) return Promise.resolve(); return this.sendTempFile(chatId, filePath, meta, quoted || message); },
+      sendTempFile: async (filePath, meta) => {
+        if (!(owner || isPublicCommand)) return undefined;
+        const result = await this.sendTempFile(chatId, filePath, meta, quoted || message);
+        if (['play', 'clip', 'facebook', 'instagram', 'tiktok', 'twitter', 'youtube', 'ytdl', 'ytmp3', 'descargar', 'mediafire'].includes(plugin.name.toLowerCase())) {
+          this.profiles.recordDownload([sender, ...senderAliases], {
+            pushName: message?.pushName,
+            name: message?.pushName
+          });
+        }
+        return result;
+      },
       detectContent: () => detectMessageContent(message),
       currentDetection: detection,
       isQuotedMessage: () => isQuotedMessage(message),

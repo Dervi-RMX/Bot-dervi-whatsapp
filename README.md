@@ -309,11 +309,16 @@ BOT-SANDBOX/
 │   ├── moderation.js    # Sistema de moderación
 │   ├── access-manager.js # Sistema de vinculación
 │   ├── downloader.js    # Descarga de medios
+│   ├── data-store.js    # Almacenamiento JSON atómico
+│   ├── profile.js       # Perfiles de usuarios
+│   ├── stats.js         # Estadísticas persistentes
+│   ├── temp-cleaner.js  # Limpieza de temporales
 │   ├── media.js         # Manejo de tipos de medios
 │   └── content-detector.js # Detección de contenido
 ├── data/                # Almacenamiento persistente
 │   ├── access.json      # Estado de vinculación de usuarios
-│   └── moderation.json  # Configuración de moderación por chat
+│   ├── moderation.json  # Configuración de moderación por chat
+│   └── users.json       # Perfiles privados (ignorado por Git)
 ├── sessions/            # Estado de autenticación de WhatsApp
 ├── tmp/                 # Archivos temporales
 ├── logs/                # Logs de ejecución
@@ -322,6 +327,12 @@ BOT-SANDBOX/
 ├── package.json         # Dependencias de Node.js
 └── README.md            # Este archivo
 ```
+
+### Perfiles y estadísticas
+
+El comando `.perfil` muestra el perfil del usuario que lo ejecuta. También acepta una mención (`.perfil @usuario`) o una respuesta a otro mensaje. Los perfiles mínimos se guardan en `data/users.json`, excluido por `.gitignore`; no se almacenan mensajes, tokens ni credenciales. El número se muestra parcialmente oculto y la foto se obtiene de Baileys, usando el avatar alternativo si no está disponible.
+
+El propietario puede consultar `.stats`, `.stats @usuario` o `.stats grupo`, y reiniciar los contadores con `.stats reset`. La variable `TEMP_FILE_MAX_AGE` controla la antigüedad máxima de archivos temporales sin usar; su valor predeterminado es una hora.
 
 ## 🌐 Soporte multiplataforma
 
