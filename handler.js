@@ -260,8 +260,6 @@ class CommandHandler {
   }
 
   async startProcessing(chatId, pluginName, quoted) {
-    // prevent concurrent processing per chat
-    if (this.activeProcessing.has(chatId)) return { already: true };
     // show typing presence if possible
     try {
       if (typeof this.client.sendPresenceUpdate === 'function') {
@@ -271,7 +269,13 @@ class CommandHandler {
       // ignore presence errors
     }
     // no fallback message: keep chat clean and avoid "mensaje en espera"
-    this.activeProcessing.set(chatId, { pluginName, startedAt: Date.now(), msgKey: null });
+    const current = this.activeProcessing.get(chatId);
+    this.activeProcessing.set(chatId, {
+      pluginName,
+      startedAt: current?.startedAt || Date.now(),
+      msgKey: null,
+      count: (current?.count || 0) + 1
+    });
     return { already: false, msgKey: null };
   }
 
@@ -290,9 +294,15 @@ class CommandHandler {
       // ignore
     }
 
+    const remaining = Math.max(0, (entry?.count || 1) - 1);
+    if (remaining > 0) {
+      this.activeProcessing.set(chatId, { ...entry, count: remaining });
+      return;
+    }
+
     try {
       if (typeof this.client.sendPresenceUpdate === 'function') {
-        // pause typing and mark available
+        // pause typing and mark available only after the last task finishes
         await this.client.sendPresenceUpdate('paused', chatId).catch(() => null);
         await this.client.sendPresenceUpdate('available', chatId).catch(() => null);
       }
