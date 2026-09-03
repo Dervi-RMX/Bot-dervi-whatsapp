@@ -92,8 +92,10 @@ module.exports = {
         {
           timeout: Math.max(120000, Number(context.handler.config.downloadTimeout || 120000)),
           audioOnly: true,
-          audioFormat: 'mp3',
-          format: 'bestaudio/best',
+          // Prefer the original audio stream to avoid the slower FFmpeg MP3 conversion.
+          convertAudio: false,
+          format: 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio',
+          concurrentFragments: 4,
           jsRuntimes: [],
           ffmpegLocation: resolveFfmpeg()
         }

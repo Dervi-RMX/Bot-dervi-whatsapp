@@ -334,6 +334,8 @@ El comando `.perfil` muestra el perfil del usuario que lo ejecuta. También acep
 
 El propietario puede consultar `.stats`, `.stats @usuario` o `.stats grupo`, y reiniciar los contadores con `.stats reset`. La variable `TEMP_FILE_MAX_AGE` controla la antigüedad máxima de archivos temporales sin usar; su valor predeterminado es una hora.
 
+`.play` prioriza el formato de audio original compatible (`m4a` o `webm`) y descarga hasta cuatro fragmentos en paralelo, evitando la conversión innecesaria a MP3 para entregar el audio más rápido.
+
 ## 🌐 Soporte multiplataforma
 
 Este bot está diseñado para funcionar en:
