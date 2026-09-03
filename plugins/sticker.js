@@ -162,104 +162,11 @@ module.exports = {
           sourceType = 'url';
           isFromUrl = true;
         }
-        // If not a URL, treat as text for emoji sticker (existing behavior)
+        // Any non-URL text also requests a random anime sticker.
         else {
-          // Fall back to original emoji-based sticker logic
-          const texto = query;
-          if (!texto.trim()) {
-            await context.reply(`⚠️ Usa: .sticker <texto> o responde a una imagen/video/GIF\n\nEjemplos:\n• .sticker feliz\n• .sticker gracias\n• .sticker amor\n• .sticker (respondiendo a un mensaje)`);
-            return;
-          }
-
-          // Original emoji-based sticker logic (simplified)
-          const EMOJIS_DISPONIBLES = [
-            '😀', '😁', '😂', '🤣', '😃', '😄', '😅', '😆', '😉', '😊',
-            '😋', '😎', '😍', '🥰', '😘', '😗', '😙', '😚', '😋', '😛',
-            '😜', '🤪', '🤨', '😢', '😭', '😓', '😰', '😪', '😫', '😌',
-            '😴', '🤔', '😤', '😠', '😡', '😒', '😓', '😔', '😖', '😞',
-            '😟', '😠', '😤', '😥', '😩', '😨', '😰', '😱', '😲', '😳',
-            '😵', '😶', '😷', '🤒', '🤕', '🤖', '🤠', '🤡', '🤥', '😈',
-            '👿', '👹', '👺', '💀', '💩', '☹️', '🙁', '😦', '😧', '😮',
-            '😯', '😪', '😴', '😪', '🤤', '😪', '😵', '💫', '💫'
-          ];
-
-          const COLORS_DISPONIBLES = [
-            '❤️', '🧡', '💛', '💚', '💙', '💜', '🤍', '🖤', '💔', '💘',
-            '👍', '👎', '✅', '❌', '❤️‍🔥', '🎉', '🌟', '⭐', '🏆'
-          ];
-
-          function obtenerEmojiAleatorio() {
-            return EMOJIS_DISPONIBLES[Math.floor(Math.random() * EMOJIS_DISPONIBLES.length)];
-          }
-
-          function obtenerEmojiPorTexto(texto) {
-            const bajo = texto.toLowerCase().trim();
-            const mapas = {
-              'feliz': '😀', 'contento': '😀', 'j': '😀',
-              'triste': '😢', 'depresión': '😢', 'sad': '😢',
-              'enojado': '😠', 'ira': '😠', 'angry': '😠',
-              'risa': '😂', 'jajaja': '😂', 'haha': '😂',
-              'sorpresa': '😮', 'wow': '😮', 'oh': '😮',
-              'hola': '👋', 'hello': '👋',
-              'gracias': '🙏', 'thank': '🙏',
-              'amor': '❤️', 'love': '❤️',
-              'fuego': '🔥', 'fire': '🔥',
-              'corazón': '❤️', 'heart': '❤️',
-              'estrella': '⭐', 'star': '⭐',
-              ' musica': '🎵', 'music': '🎵',
-              'comida': '🍕', 'eat': '🍴',
-              'dormir': '😴', 'sleep': '😴',
-              'lol': '😂', 'rofl': '😂', 'lmao': '🤣'
-            };
-
-            for (const [palabra, emoji] of Object.entries(mapas)) {
-              if (bajo.includes(palabra)) {
-                return { emoji, tipo: 'mapeado' };
-              }
-            }
-
-            return { emoji: obtenerEmojiAleatorio(), tipo: 'aleatorio' };
-          }
-
-          function crearDescripcionSticker(texto) {
-            let emoji;
-            if (texto && texto.trim()) {
-              const resultado = obtenerEmojiPorTexto(texto);
-              emoji = resultado.emoji;
-            } else {
-              emoji = obtenerEmojiAleatorio();
-            }
-
-            const partes = [emoji];
-            if (texto && texto.trim()) {
-              const textoResp = texto.trim().slice(0, 20);
-              partes.push(textoResp);
-            }
-
-            if (!EMOJIS_DISPONIBLES.includes(emoji)) {
-              partes.unshift(COLORS_DISPONIBLES[Math.floor(Math.random() * COLORS_DISPONIBLES.length)]);
-            }
-
-            return partes.join(' ');
-          }
-
-          async function enviarStickerSimple(context, emoji, texto) {
-            const descripcion = crearDescripcionSticker(texto);
-            try {
-              const caption = `🎨 ${descripcion}`;
-              await context.reply(caption);
-            } catch (error) {
-              try {
-                await context.reply(`🎨 ${emoji}`);
-              } catch (e) {
-                await context.reply(emoji);
-              }
-            }
-          }
-
-          const resultado = obtenerEmojiPorTexto(texto);
-          await enviarStickerSimple(context, resultado.emoji, texto);
-          return;
+          const download = await getRandomAnimePreview(context.handler.config.tempDirectory);
+          filePath = download.filePath;
+          sourceType = 'wistickers';
         }
       }
       // With no arguments, send a random anime sticker from WiStickers.
