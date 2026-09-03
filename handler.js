@@ -16,6 +16,7 @@ const { downloadQuotedMedia, downloadUrlToTempFile, cleanupTempFiles } = require
 const { buildOutboundPayload, formatMediaInfo, inferOutboundKindFromMime } = require('./lib/media');
 const { ModerationManager, normalizeJid } = require('./lib/moderation');
 const { AccessManager } = require('./lib/access-manager');
+const { createDataStore } = require('./lib/data-store');
 const logger = require('./lib/logger');
 
 function sameWhatsAppPhone(left, right) {
@@ -36,6 +37,7 @@ class CommandHandler {
   constructor(client, config) {
     this.client = client;
     this.config = config;
+    this.dataStore = createDataStore(config.dataDirectory);
     this.plugins = new Map();
     this.rateMap = new Map();
     this.loading = false;
@@ -50,14 +52,10 @@ class CommandHandler {
   }
 
   loadPersistentOwners() {
-    const ownersFile = path.join(this.config.dataDirectory, 'owners.json');
     try {
-      if (fs.existsSync(ownersFile)) {
-        const data = fs.readFileSync(ownersFile, 'utf8');
-        const parsed = JSON.parse(data);
-        if (Array.isArray(parsed.owners)) {
-          this.persistentOwners = parsed.owners.map(owner => normalizeJid(owner)).filter(Boolean);
-        }
+      const parsed = this.dataStore.read('owners.json', { owners: [] });
+      if (Array.isArray(parsed.owners)) {
+        this.persistentOwners = parsed.owners.map(owner => normalizeJid(owner)).filter(Boolean);
       }
     } catch (error) {
       logger.warning('Failed to load persistent owners', { error: error.message });
@@ -66,10 +64,8 @@ class CommandHandler {
   }
 
   savePersistentOwners() {
-    const ownersFile = path.join(this.config.dataDirectory, 'owners.json');
     try {
-      const data = JSON.stringify({ owners: this.persistentOwners }, null, 2);
-      fs.writeFileSync(ownersFile, data, 'utf8');
+      this.dataStore.write('owners.json', { owners: this.persistentOwners });
     } catch (error) {
       logger.warning('Failed to save persistent owners', { error: error.message });
     }
@@ -99,14 +95,10 @@ class CommandHandler {
   }
 
   loadBannedUsers() {
-    const bansFile = path.join(this.config.dataDirectory, 'bans.json');
     try {
-      if (fs.existsSync(bansFile)) {
-        const data = fs.readFileSync(bansFile, 'utf8');
-        const parsed = JSON.parse(data);
-        if (Array.isArray(parsed.bans)) {
-          this.bannedUsers = new Set(parsed.bans.map(ban => normalizeJid(ban)).filter(Boolean));
-        }
+      const parsed = this.dataStore.read('bans.json', { bans: [] });
+      if (Array.isArray(parsed.bans)) {
+        this.bannedUsers = new Set(parsed.bans.map(ban => normalizeJid(ban)).filter(Boolean));
       }
     } catch (error) {
       logger.warning('Failed to load banned users', { error: error.message });
@@ -115,10 +107,8 @@ class CommandHandler {
   }
 
   saveBannedUsers() {
-    const bansFile = path.join(this.config.dataDirectory, 'bans.json');
     try {
-      const data = JSON.stringify({ bans: Array.from(this.bannedUsers) }, null, 2);
-      fs.writeFileSync(bansFile, data, 'utf8');
+      this.dataStore.write('bans.json', { bans: Array.from(this.bannedUsers) });
     } catch (error) {
       logger.warning('Failed to save banned users', { error: error.message });
     }

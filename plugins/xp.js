@@ -1,8 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 const { normalizeJid } = require('../lib/moderation');
+const { createDataStore } = require('../lib/data-store');
 
-const xpFilePath = path.join(__dirname, '..', 'data', 'xp.json');
+const dataStore = createDataStore();
+const xpFilePath = dataStore.path('xp.json');
 
 // Activity XP settings
 const ACTIVITY_XP_REWARD = 5;
@@ -16,13 +18,12 @@ if (!fs.existsSync(dataDir)) {
 
 // Ensure XP file exists
 if (!fs.existsSync(xpFilePath)) {
-  fs.writeFileSync(xpFilePath, JSON.stringify({}, null, 2));
+  dataStore.write('xp.json', {});
 }
 
 function loadXPData() {
   try {
-    const data = fs.readFileSync(xpFilePath, 'utf8');
-    return JSON.parse(data);
+    return dataStore.read('xp.json', {});
   } catch (error) {
     console.error('Error loading XP data:', error);
     return {};
@@ -31,7 +32,7 @@ function loadXPData() {
 
 function saveXPData(data) {
   try {
-    fs.writeFileSync(xpFilePath, JSON.stringify(data, null, 2), 'utf8');
+    dataStore.write('xp.json', data);
   } catch (error) {
     console.error('Error saving XP data:', error);
   }

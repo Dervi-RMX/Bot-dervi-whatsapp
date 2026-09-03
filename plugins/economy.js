@@ -1,8 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 const { normalizeJid } = require('../lib/moderation');
+const { createDataStore } = require('../lib/data-store');
 
-const economyFilePath = path.join(__dirname, '..', 'data', 'economy.json');
+const dataStore = createDataStore();
+const economyFilePath = dataStore.path('economy.json');
 
 // Ensure data directory exists
 const dataDir = path.join(__dirname, '..', 'data');
@@ -12,13 +14,12 @@ if (!fs.existsSync(dataDir)) {
 
 // Ensure economy file exists
 if (!fs.existsSync(economyFilePath)) {
-  fs.writeFileSync(economyFilePath, JSON.stringify({}, null, 2));
+  dataStore.write('economy.json', {});
 }
 
 function loadEconomyData() {
   try {
-    const data = fs.readFileSync(economyFilePath, 'utf8');
-    return JSON.parse(data);
+    return dataStore.read('economy.json', {});
   } catch (error) {
     console.error('Error loading economy data:', error);
     return {};
@@ -27,7 +28,7 @@ function loadEconomyData() {
 
 function saveEconomyData(data) {
   try {
-    fs.writeFileSync(economyFilePath, JSON.stringify(data, null, 2), 'utf8');
+    dataStore.write('economy.json', data);
   } catch (error) {
     console.error('Error saving economy data:', error);
   }

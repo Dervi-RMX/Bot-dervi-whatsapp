@@ -424,6 +424,23 @@ El código de emparejamiento llegará al mismo chat donde ejecutaste el comando.
 
 Las sesiones, la configuración persistente y los archivos temporales de cada subbot se guardan en carpetas separadas y están protegidos por `.gitignore`. Nunca subas `sessions/`, `.env`, `data/`, `logs/`, `tmp/` ni `node_modules/` al repositorio.
 
+## 🗃️ Organización de datos
+
+El proyecto usa un almacén central en `lib/data-store.js` para leer y escribir los JSON locales con escritura atómica y permisos privados. Los archivos de datos siguen siendo compatibles con las instalaciones existentes:
+
+```text
+data/
+├── access.json
+├── bans.json
+├── economy.json
+├── moderation.json
+├── owners.json
+├── subbots.json
+└── xp.json
+```
+
+Los datos se crean únicamente en la máquina donde se ejecuta el bot y `data/` permanece excluido de Git. Antes de una migración manual, puedes respaldar los JSON copiándolos a `data/backups/`.
+
 ## 📄 Licencia
 
 Este proyecto está bajo la Licencia MIT - ver el archivo [LICENSE](LICENSE) para detalles.
