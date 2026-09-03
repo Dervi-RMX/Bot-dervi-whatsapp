@@ -27,6 +27,8 @@ module.exports = {
     process.env.BOT_TEMP_DIR || 'tmp'
   ),
 
+  tempFileMaxAgeMs: int(process.env.TEMP_FILE_MAX_AGE, 60 * 60 * 1000),
+
   sessionDirectory: path.resolve(
     root,
     process.env.BOT_SESSION_DIR || 'sessions'

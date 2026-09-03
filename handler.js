@@ -18,6 +18,8 @@ const { ModerationManager, normalizeJid } = require('./lib/moderation');
 const { AccessManager } = require('./lib/access-manager');
 const { createDataStore } = require('./lib/data-store');
 const logger = require('./lib/logger');
+const { getStatsManager } = require('./lib/stats');
+const { createTempCleaner } = require('./lib/temp-cleaner');
 
 function sameWhatsAppPhone(left, right) {
   const normalize = value => {
@@ -45,6 +47,8 @@ class CommandHandler {
     this.groupInfoCache = new Map(); // chatId -> { admins:Set, botIsAdmin:boolean, expires:number }
     this.moderation = new ModerationManager(config);
     this.access = new AccessManager(config);
+    this.stats = getStatsManager(config.dataDirectory);
+    this.tempCleaner = createTempCleaner(config.tempDirectory, { maxAgeMs: config.tempFileMaxAgeMs });
     this.persistentOwners = [];
     this.bannedUsers = new Set();
     this.loadPersistentOwners();
@@ -497,6 +501,8 @@ class CommandHandler {
     const receivedAt = metadata.receivedAt || Date.now();
     const body = getMessageText(message).trim();
     const parsed = this.parseCommand(body);
+    this.stats.recordMessage(sender, this.isGroupChat(chatId) ? chatId : null);
+    if (parsed) this.stats.recordCommand(sender, this.isGroupChat(chatId) ? chatId : null);
     this.currentSender = sender;
 
     // Check if sender is banned
@@ -677,6 +683,7 @@ class CommandHandler {
         }
       }
     } catch (error) {
+      this.stats.recordError();
       if (String(error?.message || '').includes('Plugin timeout')) {
         logger.warning(`Plugin timeout in ${plugin.name}`);
         await this.reply(chatId, '⚠️ El comando tardó demasiado y fue cancelado. Intenta de nuevo más tarde.', quoted || message);
@@ -698,8 +705,7 @@ class CommandHandler {
     ensureDir(this.config.tempDirectory);
     ensureDir(this.config.sessionDirectory);
     ensureDir(this.config.logDirectory);
-    cleanupTempFiles(this.config.tempDirectory).catch(() => null);
-    setInterval(() => cleanupTempFiles(this.config.tempDirectory).catch(() => null), 5 * 60 * 1000).unref?.();
+    this.tempCleaner.start(5 * 60 * 1000, logger);
   }
 }
 
