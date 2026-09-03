@@ -8,6 +8,7 @@ module.exports = {
   name: 'instagram',
   aliases: ['ig'],
   description: 'Descarga contenido de Instagram (fotos, videos, reels, historias)',
+  timeoutMs: 900000,
   async execute(context) {
     const detection = context.currentDetection || detectMessageContent(context.message);
     const urls = detection.type === 'url' && detection.url ? [detection.url] : extractUrls(detection.text || '');
@@ -37,7 +38,11 @@ module.exports = {
       const dl = await downloadWithYtDlp(
         safe.url,
         context.handler.config.tempDirectory,
-        { timeout: Math.max(120000, Number(context.handler.config.downloadTimeout || 120000)), format: 'bestvideo+bestaudio/best', mergeOutputFormat: 'mp4' }
+        {
+          timeout: Math.max(180000, Number(context.handler.config.downloadTimeout || 180000)),
+          format: 'bestvideo+bestaudio/best',
+          mergeOutputFormat: 'mp4'
+        }
       );
 
       if (!dl || !dl.filePath) {

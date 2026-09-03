@@ -8,6 +8,7 @@ module.exports = {
   name: 'tiktok',
   aliases: [],
   description: 'Descarga videos públicos de TikTok cuando sea posible (respeta DRM/marcas)',
+  timeoutMs: 900000,
   async execute(context) {
     const detection = context.currentDetection || detectMessageContent(context.message);
     const urls = detection.type === 'url' && detection.url ? [detection.url] : extractUrls(detection.text || '');
@@ -36,7 +37,11 @@ module.exports = {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         const timeoutForAttempt = Math.min(baseTimeout * attempt, 5 * 60 * 1000); // cap 5min
-        const opts = { timeout: timeoutForAttempt };
+        const opts = {
+          timeout: timeoutForAttempt,
+          format: 'bestvideo+bestaudio/best',
+          mergeOutputFormat: 'mp4'
+        };
         if (cookiesExist) opts.cookies = cookiesPath;
 
         context.handler.logger?.info?.(`tiktok: attempt ${attempt} with timeout ${timeoutForAttempt}${cookiesExist ? ' (cookies)' : ''}`);
@@ -63,4 +68,3 @@ module.exports = {
     }
   }
 };
-

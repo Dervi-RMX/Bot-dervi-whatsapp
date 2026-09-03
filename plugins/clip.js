@@ -15,16 +15,18 @@ function normalizeClipQuery(value) {
 function decodeHtml(value) {
   if (!value) return '';
   const result = String(value)
-    .replace(/&/g, '&')
-    .replace(/</g, '<')
-    .replace(/>/g, '>')
-    .replace(/"/g, '"')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
     .replace(/&apos;/g, "'")
     .replace(/&#039;/g, "'")
+    .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCodePoint(Number.parseInt(code, 16)))
+    .replace(/&#([0-9]+);/g, (_, code) => String.fromCodePoint(Number.parseInt(code, 10)))
     .replace(/&#x2F;/g, '/')
     .replace(/&#47;/g, '/')
     .replace(/\\\//g, '/');
-  console.log('decodeHtml: input:', JSON.stringify(value), 'output:', JSON.stringify(result));
   return result;
 }
 
@@ -85,7 +87,6 @@ function addResult(results, seen, rawUrl, title = '') {
   const url = normalizeTikTokUrl(decoded);
   if (!url || seen.has(url)) return;
   seen.add(url);
-  console.log('addResult: title input:', JSON.stringify(title), 'cleanTitle output:', JSON.stringify(cleanTitle(title)));
   results.push({ url, title: cleanTitle(title) });
 }
 
@@ -107,7 +108,6 @@ function extractTikTokResultsFromHtml(html) {
     if (results.length >= 25) break;
   }
 
-  console.log('extractTikTokResultsFromHtml results:', JSON.stringify(results, null, 2));
   return results;
 }
 
@@ -159,11 +159,15 @@ module.exports = {
   aliases: ['video', 'goku'],
   description: 'Busca clips públicos de TikTok por tema y envía el resultado más relevante',
   async execute(context) {
-    const query = normalizeClipQuery((context.args || []).join(' '));
-    if (!query) {
-      await context.reply('⚠️ Usa: .clip <tema>\nEjemplo: .clip goles de Messi');
-      return;
-    }
+    const randomQueries = [
+      'futbol goles',
+      'humor viral',
+      'animales graciosos',
+      'musica viral',
+      'fails divertidos'
+    ];
+    const requestedQuery = normalizeClipQuery((context.args || []).join(' '));
+    const query = requestedQuery || randomQueries[Math.floor(Math.random() * randomQueries.length)];
 
     let candidates = [];
     try {
