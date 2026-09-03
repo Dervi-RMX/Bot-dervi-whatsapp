@@ -188,20 +188,55 @@ module.exports = {
   async _tagall(context, args) {
     try {
       const info = await context.handler.getGroupInfo(context.chatId);
-      const participants = Array.from(info.admins) // Actually we want all participants, not just admins
-        .concat(Array.from(info.metadata?.participants || []).map(p => normalizeJid(p.id || p.jid || p.phoneNumber)))
-        .filter(jid => jid && !jid.endswith('@g.us')) // filter out groups
-        .map(jid => `@${jid.split('@')[0]}`)
-        .join(' ');
-      const text = participants ? `${participants}\n\n👥 *Etiquetado a todos los miembros*` : 'No hay miembros para etiquetar';
-      await context.reply(text);
+      const members = (info.metadata?.participants || [])
+        .map(participant => ({
+          jid: participant?.id || participant?.jid || participant?.phoneNumber,
+          displayJid: normalizeJid(participant?.phoneNumber || participant?.id || participant?.jid)
+        }))
+        .filter(member => member.jid && member.displayJid && !member.displayJid.endsWith('@g.us'))
+        .filter((member, index, list) => list.findIndex(item => item.displayJid === member.displayJid) === index);
+
+      if (!members.length) {
+        await context.reply('⚠️ No se encontraron miembros para etiquetar.');
+        return;
+      }
+
+      const mentions = members.map(member => member.jid);
+      const tags = members.map(member => `@${member.displayJid.split('@')[0]}`).join(' ');
+      const text = [
+        '📢 *ATENCIÓN A TODOS*',
+        '',
+        tags,
+        '',
+        `👥 Total de miembros: *${members.length}*`
+      ].join('\n');
+
+      await context.client.sendMessage(context.chatId, { text, mentions }, {
+        quoted: context.quoted || context.message
+      });
     } catch (error) {
+      context.handler.logger?.warning?.('No se pudo ejecutar group tagall', {
+        error: error?.message || String(error)
+      });
       await context.reply('⚠️ No se pudo etiquetar a todos los miembros.');
     }
   },
 
   async _hidetag(context, args) {
-    const text = args.join(' ').trim() || '💬 Mensaje sin mención';
-    await context.reply(text);
+    try {
+      const info = await context.handler.getGroupInfo(context.chatId);
+      const members = (info.metadata?.participants || [])
+        .map(participant => participant?.id || participant?.jid || participant?.phoneNumber)
+        .filter(Boolean);
+      const text = args.join(' ').trim() || '📢 Atención a todos los miembros del grupo.';
+      await context.client.sendMessage(context.chatId, { text, mentions: members }, {
+        quoted: context.quoted || context.message
+      });
+    } catch (error) {
+      context.handler.logger?.warning?.('No se pudo ejecutar group hidetag', {
+        error: error?.message || String(error)
+      });
+      await context.reply('⚠️ No se pudo notificar a todos los miembros.');
+    }
   }
 };
