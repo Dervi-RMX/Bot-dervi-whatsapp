@@ -92,9 +92,11 @@ module.exports = {
         {
           timeout: Math.max(120000, Number(context.handler.config.downloadTimeout || 120000)),
           audioOnly: true,
-          // Prefer the original audio stream to avoid the slower FFmpeg MP3 conversion.
-          convertAudio: false,
-          format: 'bestaudio[ext=m4a]/bestaudio[ext=webm]/bestaudio',
+          // MP3 is the most compatible audio format for WhatsApp clients.
+          convertAudio: true,
+          audioFormat: 'mp3',
+          audioQuality: '5',
+          format: 'bestaudio/best',
           concurrentFragments: 4,
           jsRuntimes: [],
           ffmpegLocation: resolveFfmpeg()
@@ -106,20 +108,10 @@ module.exports = {
       }
       downloadedFilePath = dl.filePath;
 
-      // Keep native audio formats as WhatsApp audio instead of sending them as documents.
-      const extension = path.extname(dl.filePath).toLowerCase();
-      const audioMimeTypes = {
-        '.mp3': 'audio/mpeg',
-        '.m4a': 'audio/mp4',
-        '.aac': 'audio/aac',
-        '.opus': 'audio/ogg; codecs=opus',
-        '.ogg': 'audio/ogg',
-        '.webm': 'audio/webm'
-      };
-      const mimeType = dl.mimeType || audioMimeTypes[extension] || 'audio/mpeg';
+      const mimeType = 'audio/mpeg';
 
       const sentMessage = await context.sendTempFile(dl.filePath, {
-        fileName: path.basename(dl.filePath),
+        fileName: path.basename(dl.filePath, path.extname(dl.filePath)) + '.mp3',
         mimeType,
         kind: 'audio',
         caption: '🎵 Audio descargado'
