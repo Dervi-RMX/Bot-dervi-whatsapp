@@ -23,13 +23,16 @@ function extractTargetJid(context) {
   };
 
   const entry = getMessageEntry(context) || {};
-  const mentioned = entry?.contextInfo?.mentionedJid || [];
+  const contextInfo = entry?.contextInfo || {};
+  const mentioned = contextInfo.mentionedJid || [];
   if (Array.isArray(mentioned) && mentioned.length) {
     const jid = normalizeJid(mentioned[0]);
     return jid || null;
   }
 
-  const quotedParticipant = entry?.contextInfo?.participant;
+  const quotedParticipant = contextInfo.participantPn
+    || contextInfo.senderPn
+    || contextInfo.participant;
   if (quotedParticipant) {
     const jid = normalizeJid(quotedParticipant);
     return jid || null;
@@ -44,6 +47,36 @@ function extractTargetJid(context) {
   const digits = rawArg.replace(/\D/g, '');
   if (!digits) return null;
   return `${digits}@s.whatsapp.net`;
+}
+
+function getTargetCandidates(context, targetJid) {
+  const candidates = [];
+  const add = value => {
+    const normalized = normalizeJid(value);
+    if (normalized && !candidates.includes(normalized)) candidates.push(normalized);
+  };
+
+  add(targetJid);
+  for (const alias of context.senderAliases || []) add(alias);
+
+  const content = context.getMessageContent ? context.getMessageContent() : {};
+  const type = Object.keys(content || {})[0];
+  const contextInfo = type ? content[type]?.contextInfo || {} : {};
+  add(contextInfo.participantPn);
+  add(contextInfo.senderPn);
+  add(contextInfo.participant);
+  return candidates;
+}
+
+function getPhoneNumber(candidates, contacts) {
+  for (const jid of candidates) {
+    const contact = contacts?.[jid];
+    const phone = contact?.phoneNumber || (jid.endsWith('@s.whatsapp.net') ? jid.split('@')[0] : '');
+    if (phone && /^\+?\d+$/.test(String(phone).replace(/\s/g, ''))) {
+      return String(phone).startsWith('+') ? String(phone) : `+${phone}`;
+    }
+  }
+  return '';
 }
 
 function formatTimestamp(timestamp) {
@@ -76,9 +109,10 @@ module.exports = {
       }
 
       const client = context.handler.client;
-      const normalizedTargetJid = normalizeJid(targetJid);
+      const targetCandidates = getTargetCandidates(context, targetJid);
+      const normalizedTargetJid = targetCandidates[0] || normalizeJid(targetJid);
       let pushname = '';
-      let phoneNumber = '';
+      let phoneNumber = getPhoneNumber(targetCandidates, client.contacts);
 
       // 1. Try to get info from the quoted message (if replying to a message)
       if (context.quoted) {
@@ -90,7 +124,8 @@ module.exports = {
 
       // 2. If still empty, try to get from cached contacts (using normalized JID)
       if (!pushname) {
-        const contact = client.contacts?.[normalizedTargetJid];
+        const contact = client.contacts?.[normalizedTargetJid]
+          || targetCandidates.map(jid => client.contacts?.[jid]).find(Boolean);
         if (contact) {
           pushname = contact.pushname ?? contact.formattedName ?? contact.name ?? '';
           phoneNumber = contact.phoneNumber ?? '';
@@ -110,7 +145,8 @@ module.exports = {
 
       // Get phone number from contact if not already obtained (using normalized JID)
       if (!phoneNumber) {
-        const contact = client.contacts?.[normalizedTargetJid];
+        const contact = client.contacts?.[normalizedTargetJid]
+          || targetCandidates.map(jid => client.contacts?.[jid]).find(Boolean);
         if (contact) {
           phoneNumber = contact.phoneNumber ?? '';
         }
@@ -159,7 +195,14 @@ module.exports = {
       // Get profile picture buffer (using normalized JID)
       let picBuffer = null;
       try {
-        picBuffer = await client.getProfilePicture(normalizedTargetJid);
+        for (const candidate of targetCandidates) {
+          if (typeof client.profilePictureUrl === 'function') {
+            picBuffer = await client.profilePictureUrl(candidate, 'image').catch(() => null);
+          } else if (typeof client.getProfilePicture === 'function') {
+            picBuffer = await client.getProfilePicture(candidate).catch(() => null);
+          }
+          if (picBuffer) break;
+        }
       } catch (err) {
         // Ignore errors, will use fallback
         context.handler.logger?.warning?.('Error getting profile picture', { error: err.message });
