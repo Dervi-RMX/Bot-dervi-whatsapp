@@ -79,6 +79,26 @@ function getPhoneNumber(candidates, contacts) {
   return '';
 }
 
+async function downloadProfilePicture(client, candidates) {
+  for (const candidate of candidates) {
+    try {
+      const pictureUrl = typeof client.profilePictureUrl === 'function'
+        ? await client.profilePictureUrl(candidate, 'image')
+        : null;
+      if (!pictureUrl) continue;
+
+      if (Buffer.isBuffer(pictureUrl)) return pictureUrl;
+      if (typeof pictureUrl === 'string' && /^https?:\/\//i.test(pictureUrl)) {
+        const response = await fetch(pictureUrl);
+        if (response.ok) return Buffer.from(await response.arrayBuffer());
+      }
+    } catch {
+      // Try the next JID representation before using the fallback image.
+    }
+  }
+  return null;
+}
+
 function formatTimestamp(timestamp) {
   if (!timestamp) return 'No disponible';
   const date = new Date(timestamp);
@@ -114,15 +134,7 @@ module.exports = {
       let pushname = '';
       let phoneNumber = getPhoneNumber(targetCandidates, client.contacts);
 
-      // 1. Try to get info from the quoted message (if replying to a message)
-      if (context.quoted) {
-        const msg = context.quoted.message;
-        if (msg) {
-          pushname = msg.pushName ?? msg.verifiedBizName ?? '';
-        }
-      }
-
-      // 2. If still empty, try to get from cached contacts (using normalized JID)
+      // Use the quoted participant's contact, never the command sender's message.
       if (!pushname) {
         const contact = client.contacts?.[normalizedTargetJid]
           || targetCandidates.map(jid => client.contacts?.[jid]).find(Boolean);
@@ -132,7 +144,7 @@ module.exports = {
         }
       }
 
-      // 3. If still empty, build a readable identifier from the JID (but never use number as name)
+      // If there is no cached name, use a neutral display name.
       if (!pushname) {
         const idPart = targetJid.split('@')[0];
         let clean = idPart;
@@ -192,21 +204,8 @@ module.exports = {
       const nombre = pushname || 'Usuario desconocido';
       const alias = pushname || 'Usuario desconocido';
 
-      // Get profile picture buffer (using normalized JID)
-      let picBuffer = null;
-      try {
-        for (const candidate of targetCandidates) {
-          if (typeof client.profilePictureUrl === 'function') {
-            picBuffer = await client.profilePictureUrl(candidate, 'image').catch(() => null);
-          } else if (typeof client.getProfilePicture === 'function') {
-            picBuffer = await client.getProfilePicture(candidate).catch(() => null);
-          }
-          if (picBuffer) break;
-        }
-      } catch (err) {
-        // Ignore errors, will use fallback
-        context.handler.logger?.warning?.('Error getting profile picture', { error: err.message });
-      }
+      // Baileys returns a URL here; download it before sending the image.
+      const picBuffer = await downloadProfilePicture(client, targetCandidates);
 
       // Build the boxed message
       const lines = [];
