@@ -63,7 +63,9 @@ module.exports = {
       }
 
       // Get owner JID
-      const ownerJid = context.handler.config.ownerJid;
+      const ownerJid = context.handler.config.isSubbot
+        ? (context.client.user?.id || context.client.user?.lid)
+        : context.handler.config.ownerJid;
       if (!ownerJid) {
         // Log internally but don't show message in chat
         context.handler.logger?.warning?.('Owner JID not configured for .ver command');

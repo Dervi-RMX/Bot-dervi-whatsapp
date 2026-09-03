@@ -308,7 +308,9 @@ class CommandHandler {
   }
 
   isOwnerIdentity(sender) {
-    const owner = normalizeJid(this.config.ownerJid || '');
+    const connectedOwner = normalizeJid(this.client?.user?.id || '');
+    const connectedLid = normalizeJid(this.client?.user?.lid || '');
+    const owner = normalizeJid(this.config.ownerJid || (this.config.isSubbot ? connectedOwner : ''));
     const ownerLid = normalizeJid(this.config.ownerLid || '');
     const normalizedSender = normalizeJid(sender);
 
@@ -323,8 +325,6 @@ class CommandHandler {
 
     // Also accept the connected account's LID when that account matches the
     // configured owner number.
-    const connectedOwner = normalizeJid(this.client?.user?.id || '');
-    const connectedLid = normalizeJid(this.client?.user?.lid || '');
     return sameWhatsAppPhone(connectedOwner, owner)
       && Boolean(connectedLid)
       && normalizedSender === connectedLid;
