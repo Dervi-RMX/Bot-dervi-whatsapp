@@ -15,6 +15,51 @@ function isUrl(string) {
   }
 }
 
+const WISTICKERS_ANIME_URL = 'https://www.wistickers.com/anime';
+
+function wixImageToUrl(value) {
+  const match = String(value || '').match(/^wix:image:\/\/v1\/([^/#]+)/i);
+  return match ? `https://static.wixstatic.com/media/${match[1]}` : null;
+}
+
+async function getRandomAnimePreview(tempDirectory) {
+  const response = await fetch(WISTICKERS_ANIME_URL, {
+    headers: { 'user-agent': 'BOT-SANDBOX/1.0' }
+  });
+  if (!response.ok) throw new Error(`WiStickers respondió ${response.status}`);
+
+  const html = (await response.text())
+    .replace(/\\\//g, '/')
+    .replace(/\\"/g, '"');
+  const previews = [];
+  const pattern = /"vistaPrevia":"(wix:image:\/\/v1\/[^"]+)"[\s\S]{0,1800}?"categoria":"Anime"/gi;
+  for (const match of html.matchAll(pattern)) {
+    const previewUrl = wixImageToUrl(match[1]);
+    if (previewUrl && !previews.includes(previewUrl)) previews.push(previewUrl);
+  }
+  if (!previews.length) throw new Error('No se encontraron stickers anime en WiStickers');
+
+  const selected = previews[Math.floor(Math.random() * previews.length)];
+  return downloadUrlToTempFile(selected, tempDirectory, {
+    timeout: 60000,
+    maxBytes: 20
+  });
+}
+
+async function convertRandomPreviewToSticker(filePath) {
+  const metadata = await sharp(filePath).metadata();
+  const width = metadata.width || 512;
+  const height = metadata.height || 512;
+  const size = Math.min(width, height, 512);
+  const left = width > size ? Math.floor(Math.random() * (width - size)) : 0;
+  const top = height > size ? Math.floor(Math.random() * (height - size)) : 0;
+  return sharp(filePath)
+    .extract({ left, top, width: size, height: size })
+    .resize(512, 512, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .webp({ quality: 85 })
+    .toBuffer();
+}
+
 /**
  * Converts an image to sticker format (WebP, 512x512 max)
  * @param {Buffer|string} input - Buffer or file path
@@ -217,10 +262,11 @@ module.exports = {
           return;
         }
       }
-      // If no args and no quoted message, show help
+      // With no arguments, send a random anime sticker from WiStickers.
       else {
-        await context.reply(`⚠️ Usa: .sticker <texto> o responde a una imagen/video/GIF\n\nEjemplos:\n• .sticker feliz\n• .sticker gracias\n• .sticker amor\n• .sticker (respondiendo a un mensaje)\n• .sticker https://ejemplo.com/imagen.jpg`);
-        return;
+        const download = await getRandomAnimePreview(context.handler.config.tempDirectory);
+        filePath = download.filePath;
+        sourceType = 'wistickers';
       }
 
       // Process the media file to create a sticker
@@ -228,12 +274,16 @@ module.exports = {
         let stickerBuffer;
 
         try {
-          // Try to convert to sticker (works for images, some videos)
-          stickerBuffer = await convertToSticker(filePath);
+          // Crop a random tile from WiStickers previews; regular media uses normal conversion.
+          stickerBuffer = sourceType === 'wistickers'
+            ? await convertRandomPreviewToSticker(filePath)
+            : await convertToSticker(filePath);
         } catch (convertError) {
           // If direct conversion fails, try to extract frame from video/GIF
           try {
-            stickerBuffer = await extractFirstFrameToSticker(filePath);
+            stickerBuffer = sourceType === 'wistickers'
+              ? await convertRandomPreviewToSticker(filePath)
+              : await extractFirstFrameToSticker(filePath);
           } catch (frameError) {
             // If both fail, provide helpful error message
             throw new Error(`No se pudo convertir el media a sticker. Asegúrate de que sea una imagen, video o GIF válido.`);
@@ -248,7 +298,7 @@ module.exports = {
           fileName: 'sticker.webp',
           mimeType: 'image/webp',
           kind: 'sticker',
-          caption: `🎨 Sticker generado${sourceType === 'url' ? ' de URL' : ''}`
+          caption: `🎨 Sticker generado${sourceType === 'wistickers' ? ' aleatoriamente de WiStickers Anime' : sourceType === 'url' ? ' de URL' : ''}`
         });
 
         // Clean up input file
