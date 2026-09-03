@@ -1,15 +1,16 @@
 const fs = require('fs');
 const path = require('path');
 const { normalizeJid } = require('../lib/moderation');
+const { createDataStore } = require('../lib/data-store');
 
-const xpFilePath = path.join(__dirname, '..', 'data', 'xp.json');
+const dataStore = createDataStore();
 const fallbackImagePath = path.join(__dirname, '..', 'assets', 'fallback.webp');
 
 function loadXPData() {
   try {
-    const data = fs.readFileSync(xpFilePath, 'utf8');
-    return JSON.parse(data);
+    return dataStore.read('xp.json', {});
   } catch (error) {
+    console.error('Error loading XP data:', error);
     return {};
   }
 }
