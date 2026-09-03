@@ -7,7 +7,7 @@ try {
   const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   const result = spawnSync(npmCommand, ['install', '--no-audit', '--no-fund'], {
     stdio: 'inherit',
-    shell: false
+    shell: process.platform === 'win32'
   });
 
   if (result.error) throw result.error;
