@@ -106,14 +106,22 @@ module.exports = {
       }
       downloadedFilePath = dl.filePath;
 
-      // Determine if it's audio or video based on mime type or extension
-      const mimeType = dl.mimeType || 'audio/mpeg';
-      const isAudio = mimeType.startsWith('audio/') || /\.mp3$/i.test(dl.filePath);
+      // Keep native audio formats as WhatsApp audio instead of sending them as documents.
+      const extension = path.extname(dl.filePath).toLowerCase();
+      const audioMimeTypes = {
+        '.mp3': 'audio/mpeg',
+        '.m4a': 'audio/mp4',
+        '.aac': 'audio/aac',
+        '.opus': 'audio/ogg; codecs=opus',
+        '.ogg': 'audio/ogg',
+        '.webm': 'audio/webm'
+      };
+      const mimeType = dl.mimeType || audioMimeTypes[extension] || 'audio/mpeg';
 
       const sentMessage = await context.sendTempFile(dl.filePath, {
         fileName: path.basename(dl.filePath),
         mimeType,
-        kind: isAudio ? 'audio' : 'document',
+        kind: 'audio',
         caption: '🎵 Audio descargado'
       });
       scheduleAudioDeletion(context, sentMessage);
