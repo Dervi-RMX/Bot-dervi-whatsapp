@@ -29,6 +29,7 @@ module.exports = {
   description: 'Descarga audio/video de URL o busca y descarga: .play <url_o_busqueda>',
   groupOnly: false,
   adminOnly: false,
+  timeoutMs: 900000,
   async execute(context) {
     const args = context.args || [];
     const query = args.join(' ').trim();

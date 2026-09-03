@@ -648,9 +648,10 @@ class CommandHandler {
     try {
       // enforce plugin timeout
       const execPromise = plugin.execute(context);
-      const timeoutMs = plugin.name.toLowerCase() === 'play'
-        ? Math.max(this.config.pluginTimeoutMs || 60000, 240000)
-        : (this.config.pluginTimeoutMs || 60000);
+      const timeoutMs = plugin.timeoutMs
+        || (plugin.name.toLowerCase() === 'play'
+          ? Math.max(this.config.pluginTimeoutMs || 60000, 240000)
+          : (this.config.pluginTimeoutMs || 60000));
       const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Plugin timeout')), timeoutMs));
       await Promise.race([execPromise, timeoutPromise]);
       logger.success('✓ Response sent');
