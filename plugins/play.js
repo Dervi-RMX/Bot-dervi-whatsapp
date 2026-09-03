@@ -102,8 +102,12 @@ module.exports = {
         // ignore
       }
 
-      context.handler.logger?.warning?.('Play download failed', { error: error?.message || String(error) });
-      await context.reply('⚠️ No fue posible descargar el contenido. Puede que la URL no sea válida, el contenido no esté disponible o haya ocurrido un error.');
+      const reason = String(error?.message || error || 'Error desconocido')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 500);
+      context.handler.logger?.warning?.('Play download failed', { error: reason });
+      await context.reply(`⚠️ No fue posible descargar el contenido.\n\nMotivo: ${reason}`);
     } finally {
       if (downloadedFilePath) {
         await fs.promises.unlink(downloadedFilePath).catch(() => null);
