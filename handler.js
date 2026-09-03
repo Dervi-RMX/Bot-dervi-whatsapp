@@ -556,8 +556,9 @@ class CommandHandler {
     const isSubbotPublicCommand = this.config.isSubbot === true
       && !plugin.ownerOnly
       && !plugin.adminOnly;
+    const publicCommandNames = new Set(['play', 'clip', 'facebook', 'instagram']);
     const isPublicCommand = isGame
-      || plugin.name.toLowerCase() === 'play'
+      || publicCommandNames.has(plugin.name.toLowerCase())
       || isSubbotPublicCommand;
     const allowReaction = owner || isPublicCommand;
 
