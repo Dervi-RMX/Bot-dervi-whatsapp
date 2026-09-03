@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const { URL } = require('url');
+const { execFileSync } = require('child_process');
 
 const projectRoot = path.resolve(__dirname, '..');
 const binDirectory = path.join(projectRoot, 'bin');
@@ -28,6 +29,7 @@ function download(url, destination, redirects = 0) {
         response.resume();
         return reject(new Error(`Descarga de yt-dlp falló con HTTP ${response.statusCode}.`));
       }
+      const expectedLength = Number(response.headers['content-length'] || 0);
       const temporary = `${destination}.${process.pid}.tmp`;
       const output = fs.createWriteStream(temporary, { mode: 0o755 });
       response.pipe(output);
@@ -36,6 +38,10 @@ function download(url, destination, redirects = 0) {
           try {
             fs.renameSync(temporary, destination);
             fs.chmodSync(destination, 0o755);
+            const actualLength = fs.statSync(destination).size;
+            if (expectedLength > 0 && actualLength !== expectedLength) {
+              throw new Error(`descarga incompleta (${actualLength}/${expectedLength} bytes)`);
+            }
             resolve();
           } catch (error) {
             fs.rmSync(temporary, { force: true });
@@ -52,10 +58,22 @@ function download(url, destination, redirects = 0) {
   });
 }
 
+function isUsable(filePath) {
+  try {
+    const stat = fs.statSync(filePath);
+    if (stat.size < 1024 * 1024) return false;
+    execFileSync(filePath, ['--version'], { stdio: 'ignore', windowsHide: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function main() {
   const asset = getAsset();
   const destination = path.join(binDirectory, asset.name);
-  if (fs.existsSync(destination)) return;
+  if (isUsable(destination)) return;
+  fs.rmSync(destination, { force: true });
   fs.mkdirSync(binDirectory, { recursive: true });
   console.log(`Descargando yt-dlp para ${process.platform}...`);
   await download(`https://github.com/yt-dlp/yt-dlp/releases/latest/download/${asset.name}`, destination);
