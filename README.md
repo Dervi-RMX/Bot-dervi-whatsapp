@@ -336,6 +336,8 @@ El propietario puede consultar `.stats`, `.stats @usuario` o `.stats grupo`, y r
 
 `.play` descarga hasta cuatro fragmentos en paralelo y entrega el resultado como MP3, el formato de audio con mayor compatibilidad entre clientes de WhatsApp.
 
+El comando `.anticommand on` bloquea todos los comandos en el chat actual para los demás usuarios; el OWNER mantiene el acceso. Usa `.anticommand off` para desactivarlo o `.anticommand status` para consultar el estado. La configuración se guarda por chat en `data/moderation.json`.
+
 ## 🌐 Soporte multiplataforma
 
 Este bot está diseñado para funcionar en:

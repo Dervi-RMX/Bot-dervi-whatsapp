@@ -561,6 +561,10 @@ class CommandHandler {
     }
 
     const owner = this.isOwner(sender, senderAliases);
+    const antiCommand = this.moderation.getAntiCommand(chatId);
+    if (antiCommand.enabled && !owner) {
+      return;
+    }
     const isGame = (() => {
       // Check explicit category
       if (plugin.category && typeof plugin.category === 'string' && plugin.category.toLowerCase() === 'games') {
