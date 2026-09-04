@@ -178,7 +178,8 @@ module.exports = {
           audioFormat: 'mp3',
           audioQuality: '7',
           format: 'bestaudio/best',
-          concurrentFragments: 4,
+          // Conversion to MP3 must finish after a complete input file is written.
+          concurrentFragments: 1,
           printMetadata: true,
           retries: 1,
           fragmentRetries: 1,

@@ -334,7 +334,7 @@ El comando `.perfil` muestra el perfil del usuario que lo ejecuta. También acep
 
 El propietario puede consultar `.stats`, `.stats @usuario` o `.stats grupo`, y reiniciar los contadores con `.stats reset`. La variable `TEMP_FILE_MAX_AGE` controla la antigüedad máxima de archivos temporales sin usar; su valor predeterminado es una hora.
 
-`.play` descarga hasta cuatro fragmentos en paralelo y entrega el resultado como MP3, el formato de audio con mayor compatibilidad entre clientes de WhatsApp.
+`.play` entrega el resultado como MP3, el formato de audio con mayor compatibilidad entre clientes de WhatsApp, usando una escritura completa del archivo antes de convertirlo para evitar errores de FFmpeg.
 
 Antes del audio, `.play` envía una ficha con título, canal, duración, calidad, tamaño y URL de la pista, acompañada por `assets/play-info.jpg`.
 
