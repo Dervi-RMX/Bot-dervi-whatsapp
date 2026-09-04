@@ -340,6 +340,8 @@ Antes del audio, `.play` envía una ficha con título, canal, duración, calidad
 
 El comando `.anticommand on` bloquea todos los comandos en el chat actual para los demás usuarios; el OWNER mantiene el acceso. Usa `.anticommand off` para desactivarlo o `.anticommand status` para consultar el estado. La configuración se guarda por chat en `data/moderation.json`.
 
+El OWNER puede responder al mensaje de una persona con `.permiso` para concederle acceso completo y permanente. También puede usar `.permiso revocar` respondiendo a su mensaje para quitar ese acceso; los permisos se guardan en `data/owners.json`.
+
 ## 🌐 Soporte multiplataforma
 
 Este bot está diseñado para funcionar en:
