@@ -94,10 +94,10 @@ async function sendTrackInfo(context, metadata, filePath, sourceUrl) {
       image: fs.readFileSync(infoImagePath),
       caption: text
     }, { quoted: context.quoted || context.message });
-    scheduleMessageDeletion(context, sentMessage, 5 * 60 * 1000, 'Ficha informativa');
+    scheduleMessageDeletion(context, sentMessage, 15 * 60 * 1000, 'Ficha informativa');
   } else {
     const sentMessage = await context.reply(text);
-    scheduleMessageDeletion(context, sentMessage, 5 * 60 * 1000, 'Ficha informativa');
+    scheduleMessageDeletion(context, sentMessage, 15 * 60 * 1000, 'Ficha informativa');
   }
 }
 
