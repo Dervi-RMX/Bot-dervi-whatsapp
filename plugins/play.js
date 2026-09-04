@@ -171,15 +171,19 @@ module.exports = {
         urlToDownload,
         context.handler.config.tempDirectory,
         {
-          timeout: Math.max(120000, Number(context.handler.config.downloadTimeout || 120000)),
+          timeout: Math.max(90000, Number(context.handler.config.downloadTimeout || 90000)),
           audioOnly: true,
           // MP3 is the most compatible audio format for WhatsApp clients.
           convertAudio: true,
           audioFormat: 'mp3',
-          audioQuality: '5',
+          audioQuality: '7',
           format: 'bestaudio/best',
           concurrentFragments: 4,
           printMetadata: true,
+          retries: 1,
+          fragmentRetries: 1,
+          socketTimeout: 20,
+          maxAttempts: 2,
           jsRuntimes: [],
           ffmpegLocation: resolveFfmpeg()
         }
