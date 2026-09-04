@@ -24,76 +24,81 @@ function isUrl(string) {
   }
 }
 
-function scheduleAudioDeletion(context, sentMessage) {
+function scheduleMessageDeletion(context, sentMessage, delayMs, label) {
   const messageKey = sentMessage?.key;
   if (!messageKey?.id || !context.client?.sendMessage) return;
 
-  const deletionDelay = 20 * 60 * 1000;
   setTimeout(async () => {
     try {
       await context.client.sendMessage(context.chatId, { delete: messageKey });
-      context.handler.logger?.info?.('Audio de .play eliminado automáticamente', {
+      context.handler.logger?.info?.(`${label} de .play eliminado automáticamente`, {
         chatId: context.chatId,
         messageId: messageKey.id
       });
     } catch (error) {
-      context.handler.logger?.warning?.('No se pudo eliminar automáticamente el audio de .play', {
+      context.handler.logger?.warning?.(`No se pudo eliminar automáticamente ${label.toLowerCase()} de .play`, {
         chatId: context.chatId,
         messageId: messageKey.id,
         error: error?.message || String(error)
       });
     }
+  }, delayMs);
+}
 
-    function formatDuration(seconds) {
-      const total = Number(seconds);
-      if (!Number.isFinite(total) || total < 0) return 'No disponible';
-      const minutes = Math.floor(total / 60);
-      const remaining = Math.floor(total % 60);
-      return `${minutes}:${String(remaining).padStart(2, '0')}`;
-    }
+function scheduleAudioDeletion(context, sentMessage) {
+  scheduleMessageDeletion(context, sentMessage, 20 * 60 * 1000, 'Audio');
+}
 
-    function formatSize(bytes) {
-      const size = Number(bytes);
-      if (!Number.isFinite(size) || size <= 0) return 'No disponible';
-      const units = ['B', 'KB', 'MB', 'GB'];
-      let value = size;
-      let unit = 0;
-      while (value >= 1024 && unit < units.length - 1) {
-        value /= 1024;
-        unit += 1;
-      }
-      return `${value.toFixed(unit ? 2 : 0)} ${units[unit]}`;
-    }
+function formatDuration(seconds) {
+  const total = Number(seconds);
+  if (!Number.isFinite(total) || total < 0) return 'No disponible';
+  const minutes = Math.floor(total / 60);
+  const remaining = Math.floor(total % 60);
+  return `${minutes}:${String(remaining).padStart(2, '0')}`;
+}
 
-    async function sendTrackInfo(context, metadata, filePath, sourceUrl) {
-      const channel = metadata?.channel || metadata?.uploader || metadata?.creator || 'No disponible';
-      const duration = formatDuration(metadata?.duration);
-      const quality = metadata?.abr
-        ? `${Math.round(Number(metadata.abr))} kbps`
-        : (metadata?.format_note || metadata?.acodec || 'MP3');
-      const size = formatSize(metadata?.filesize || metadata?.filesize_approx || fs.statSync(filePath).size);
-      const url = metadata?.webpage_url || (isUrl(sourceUrl) ? sourceUrl : 'No disponible');
-      const title = metadata?.track || metadata?.title || 'Audio solicitado';
-      const text = [
-        `🎵 *${title}*`,
-        '',
-        `◈ Canal » *${channel}*`,
-        `◈ Duración » *${duration}*`,
-        `◈ Calidad » *${quality}*`,
-        `◈ Tamaño » *${size}*`,
-        `◈ URL » ${url}`
-      ].join('\n');
+function formatSize(bytes) {
+  const size = Number(bytes);
+  if (!Number.isFinite(size) || size <= 0) return 'No disponible';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = size;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return `${value.toFixed(unit ? 2 : 0)} ${units[unit]}`;
+}
 
-      if (fs.existsSync(infoImagePath)) {
-        await context.client.sendMessage(context.chatId, {
-          image: fs.readFileSync(infoImagePath),
-          caption: text
-        }, { quoted: context.quoted || context.message });
-      } else {
-        await context.reply(text);
-      }
-    }
-  }, deletionDelay);
+async function sendTrackInfo(context, metadata, filePath, sourceUrl) {
+  const channel = metadata?.channel || metadata?.uploader || metadata?.creator || 'No disponible';
+  const duration = formatDuration(metadata?.duration);
+  const quality = metadata?.abr
+    ? `${Math.round(Number(metadata.abr))} kbps`
+    : (metadata?.format_note || metadata?.acodec || 'MP3');
+  const size = formatSize(metadata?.filesize || metadata?.filesize_approx || fs.statSync(filePath).size);
+  const url = metadata?.webpage_url || (isUrl(sourceUrl) ? sourceUrl : 'No disponible');
+  const title = metadata?.track || metadata?.title || 'Audio solicitado';
+  const text = [
+    `🎵 *${title}*`,
+    '',
+    `◈ Canal » *${channel}*`,
+    `◈ Duración » *${duration}*`,
+    `◈ Calidad » *${quality}*`,
+    `◈ Tamaño » *${size}*`,
+    `◈ URL » ${url}`
+  ].join('\n');
+
+  if (fs.existsSync(infoImagePath)) {
+    const sentMessage = await context.client.sendMessage(context.chatId, {
+      image: fs.readFileSync(infoImagePath),
+      caption: text
+    }, { quoted: context.quoted || context.message });
+    scheduleMessageDeletion(context, sentMessage, 5 * 60 * 1000, 'Ficha informativa');
+  } else {
+    const sentMessage = await context.reply(text);
+    scheduleMessageDeletion(context, sentMessage, 5 * 60 * 1000, 'Ficha informativa');
+  }
 }
 
 module.exports = {
