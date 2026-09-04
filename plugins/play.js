@@ -3,6 +3,7 @@ const { extractUrls, validateSafeUrl } = require('../lib/utils');
 const { downloadWithYtDlp } = require('../lib/downloader');
 const fs = require('fs');
 const path = require('path');
+const infoImagePath = path.join(__dirname, '..', 'assets', 'play-info.jpg');
 
 function resolveFfmpeg() {
   const localPath = path.join(__dirname, '..', 'bin', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
@@ -41,6 +42,56 @@ function scheduleAudioDeletion(context, sentMessage) {
         messageId: messageKey.id,
         error: error?.message || String(error)
       });
+    }
+
+    function formatDuration(seconds) {
+      const total = Number(seconds);
+      if (!Number.isFinite(total) || total < 0) return 'No disponible';
+      const minutes = Math.floor(total / 60);
+      const remaining = Math.floor(total % 60);
+      return `${minutes}:${String(remaining).padStart(2, '0')}`;
+    }
+
+    function formatSize(bytes) {
+      const size = Number(bytes);
+      if (!Number.isFinite(size) || size <= 0) return 'No disponible';
+      const units = ['B', 'KB', 'MB', 'GB'];
+      let value = size;
+      let unit = 0;
+      while (value >= 1024 && unit < units.length - 1) {
+        value /= 1024;
+        unit += 1;
+      }
+      return `${value.toFixed(unit ? 2 : 0)} ${units[unit]}`;
+    }
+
+    async function sendTrackInfo(context, metadata, filePath, sourceUrl) {
+      const channel = metadata?.channel || metadata?.uploader || metadata?.creator || 'No disponible';
+      const duration = formatDuration(metadata?.duration);
+      const quality = metadata?.abr
+        ? `${Math.round(Number(metadata.abr))} kbps`
+        : (metadata?.format_note || metadata?.acodec || 'MP3');
+      const size = formatSize(metadata?.filesize || metadata?.filesize_approx || fs.statSync(filePath).size);
+      const url = metadata?.webpage_url || (isUrl(sourceUrl) ? sourceUrl : 'No disponible');
+      const title = metadata?.track || metadata?.title || 'Audio solicitado';
+      const text = [
+        `🎵 *${title}*`,
+        '',
+        `◈ Canal » *${channel}*`,
+        `◈ Duración » *${duration}*`,
+        `◈ Calidad » *${quality}*`,
+        `◈ Tamaño » *${size}*`,
+        `◈ URL » ${url}`
+      ].join('\n');
+
+      if (fs.existsSync(infoImagePath)) {
+        await context.client.sendMessage(context.chatId, {
+          image: fs.readFileSync(infoImagePath),
+          caption: text
+        }, { quoted: context.quoted || context.message });
+      } else {
+        await context.reply(text);
+      }
     }
   }, deletionDelay);
 }
@@ -98,6 +149,7 @@ module.exports = {
           audioQuality: '5',
           format: 'bestaudio/best',
           concurrentFragments: 4,
+          printMetadata: true,
           jsRuntimes: [],
           ffmpegLocation: resolveFfmpeg()
         }
@@ -109,6 +161,7 @@ module.exports = {
       downloadedFilePath = dl.filePath;
 
       const mimeType = 'audio/mpeg';
+      await sendTrackInfo(context, dl.metadata, dl.filePath, urlToDownload);
 
       const sentMessage = await context.sendTempFile(dl.filePath, {
         fileName: path.basename(dl.filePath, path.extname(dl.filePath)) + '.mp3',
