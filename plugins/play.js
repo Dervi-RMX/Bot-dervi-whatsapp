@@ -101,6 +101,28 @@ async function sendTrackInfo(context, metadata, filePath, sourceUrl) {
   }
 }
 
+async function sendInitialTrackInfo(context, query, sourceUrl) {
+  const text = [
+    `🎵 *${query}*`,
+    '',
+    '◈ Canal » *Buscando información...*',
+    '◈ Duración » *Calculando...*',
+    '◈ Calidad » *Calculando...*',
+    '◈ Tamaño » *Calculando...*',
+    `◈ URL » ${isUrl(sourceUrl) ? sourceUrl : 'Búsqueda de YouTube'}`,
+    '',
+    '⏳ Preparando tu audio...'
+  ].join('\n');
+
+  if (fs.existsSync(infoImagePath)) {
+    return context.client.sendMessage(context.chatId, {
+      image: fs.readFileSync(infoImagePath),
+      caption: text
+    }, { quoted: context.quoted || context.message });
+  }
+  return context.reply(text);
+}
+
 module.exports = {
   name: 'play',
   aliases: [],
@@ -140,8 +162,11 @@ module.exports = {
       // ignore presence errors
     }
 
+    let initialInfoMessage = null;
     let downloadedFilePath = null;
     try {
+      // Respond immediately while yt-dlp resolves metadata and downloads the audio.
+      initialInfoMessage = await sendInitialTrackInfo(context, query, urlToDownload);
       const dl = await downloadWithYtDlp(
         urlToDownload,
         context.handler.config.tempDirectory,
@@ -167,6 +192,9 @@ module.exports = {
 
       const mimeType = 'audio/mpeg';
       await sendTrackInfo(context, dl.metadata, dl.filePath, urlToDownload);
+      if (initialInfoMessage?.key?.id) {
+        await context.client.sendMessage(context.chatId, { delete: initialInfoMessage.key }).catch(() => null);
+      }
 
       const sentMessage = await context.sendTempFile(dl.filePath, {
         fileName: path.basename(dl.filePath, path.extname(dl.filePath)) + '.mp3',
@@ -201,6 +229,9 @@ module.exports = {
         .trim()
         .slice(0, 500);
       context.handler.logger?.warning?.('Play download failed', { error: reason });
+      if (initialInfoMessage?.key?.id) {
+        await context.client.sendMessage(context.chatId, { delete: initialInfoMessage.key }).catch(() => null);
+      }
       await context.reply(`⚠️ No fue posible descargar el contenido.\n\nMotivo: ${reason}`);
     } finally {
       if (downloadedFilePath) {
